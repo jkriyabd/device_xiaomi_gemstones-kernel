@@ -182,6 +182,10 @@ jobs:
             --force-sync \
             --fetch-submodules \
             -j$(nproc --all)
+      - name: Clone SukiSU
+        run: |
+          git clone --depth=1 https://github.com/SukiSU-Ultra/SukiSU-Ultra.git \
+          kernel-build/common/KernelSU-Next
 
       - name: Build, and process the kernel(s)
         working-directory: kernel-build
