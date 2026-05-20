@@ -28,9 +28,7 @@ struct wakelock {
 	char			*name;
 	struct rb_node		node;
 	struct wakeup_source	*ws;
-#ifdef CONFIG_PM_WAKELOCKS_GC
 	struct list_head	lru;
-#endif
 };
 
 static struct rb_root wakelocks_tree = RB_ROOT;
@@ -81,7 +79,6 @@ static inline void increment_wakelocks_number(void) {}
 static inline void decrement_wakelocks_number(void) {}
 #endif /* CONFIG_PM_WAKELOCKS_LIMIT */
 
-#ifdef CONFIG_PM_WAKELOCKS_GC
 #define WL_GC_COUNT_MAX	100
 #define WL_GC_TIME_SEC	300
 
@@ -141,11 +138,6 @@ static void wakelocks_gc(void)
 
 	schedule_work(&wakelock_work);
 }
-#else /* !CONFIG_PM_WAKELOCKS_GC */
-static inline void wakelocks_lru_add(struct wakelock *wl) {}
-static inline void wakelocks_lru_most_recent(struct wakelock *wl) {}
-static inline void wakelocks_gc(void) {}
-#endif /* !CONFIG_PM_WAKELOCKS_GC */
 
 static struct wakelock *wakelock_lookup_add(const char *name, size_t len,
 					    bool add_if_not_found)
