@@ -183,11 +183,11 @@ jobs:
             --fetch-submodules \
             -j$(nproc --all)
       - name: Clone SukiSU Ultra
-  working-directory: kernel-build
-  run: |
-    rm -rf common/KernelSU-Next
-    git clone --depth=1 https://github.com/SukiSU-Ultra/SukiSU-Ultra.git \
-    common/KernelSU-Next
+        working-directory: kernel-build
+        run: |
+          rm -rf common/KernelSU-Next
+          git clone --depth=1 https://github.com/SukiSU-Ultra/SukiSU-Ultra.git \
+          common/KernelSU-Next
 
       - name: Build, and process the kernel(s)
         working-directory: kernel-build
