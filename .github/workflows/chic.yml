@@ -188,6 +188,23 @@ jobs:
           rm -rf common/KernelSU-Next
           git clone --depth=1 https://github.com/SukiSU-Ultra/SukiSU-Ultra.git \
           common/KernelSU-Next
+          
+            - name: Add RTL8821AU driver (TP-Link Archer T2U Plus)
+        working-directory: kernel-build
+        run: |
+          set -e
+          WL=common/drivers/net/wireless
+          git clone --depth=1 https://github.com/morrownr/8821au-20210708 ${WL}/rtl8821au
+          rm -rf ${WL}/rtl8821au/.git
+
+          sed -i 's|^endif # WLAN|source "drivers/net/wireless/rtl8821au/Kconfig"\nendif # WLAN|' ${WL}/Kconfig
+          echo 'obj-$(CONFIG_RTL8821AU) += rtl8821au/' >> ${WL}/Makefile
+          grep -q rtl8821au ${WL}/Kconfig || { echo "::error::Kconfig hook failed"; exit 1; }
+
+          sed -i '1i ccflags-y += -Wno-error -Wno-error=incompatible-function-pointer-types -Wno-error=implicit-function-declaration -Wno-error=int-conversion -Wno-error=return-type -Wno-error=strict-prototypes' ${WL}/rtl8821au/Makefile
+
+          printf '\nCONFIG_RTL8821AU=y\nCONFIG_CFI_PERMISSIVE=y\n' \
+            >> common/arch/arm64/configs/chickernel_defconfig
 
       - name: Build, and process the kernel(s)
         working-directory: kernel-build
