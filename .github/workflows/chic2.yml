@@ -200,6 +200,9 @@ jobs:
 
           sed -i 's/^CONFIG_PLATFORM_I386_PC *=.*/CONFIG_PLATFORM_I386_PC = n/' "$DRV/Makefile"
           sed -i 's/^obj-\$(CONFIG_[A-Za-z0-9_]*) *[:+]*= *\$(MODULE_NAME)\.o/obj-$(CONFIG_88XXAU) += $(MODULE_NAME).o/' "$DRV/Makefile"
+          sed -i 's/-Wno-stringop-overread//g; s/-Wno-stringop-overflow//g; s/-Wno-maybe-uninitialized//g' "$DRV/Makefile"
+          echo "--- remaining -W flags in driver Makefile ---"
+          grep -n -- '-W' "$DRV/Makefile" || true
           echo 'EXTRA_CFLAGS += -Wno-error' >> "$DRV/Makefile"
           grep -q 'obj-$(CONFIG_88XXAU)' "$DRV/Makefile" || { echo "ERROR: driver Makefile obj line not patched"; grep -n 'obj-' "$DRV/Makefile"; exit 1; }
 
