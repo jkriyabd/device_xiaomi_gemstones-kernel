@@ -188,50 +188,36 @@ jobs:
           rm -rf common/KernelSU-Next
           git clone --depth=1 https://github.com/SukiSU-Ultra/SukiSU-Ultra.git \
           common/KernelSU-Next
+          
       - name: Add RTL8821AU driver
-
         working-directory: kernel-build
-
         run: |
-
           set -e
-
           DRV=common/drivers/net/wireless/rtl8812au
 
           git clone --depth=1 -b v5.6.4.2 https://github.com/aircrack-ng/rtl8812au "$DRV"
-
           rm -rf "$DRV/.git"
 
           sed -i 's/^CONFIG_PLATFORM_I386_PC *=.*/CONFIG_PLATFORM_I386_PC = n/' "$DRV/Makefile"
-
           sed -i 's/^obj-\$(CONFIG_[A-Za-z0-9_]*) *[:+]*= *\$(MODULE_NAME)\.o/obj-$(CONFIG_88XXAU) += $(MODULE_NAME).o/' "$DRV/Makefile"
-
           echo 'EXTRA_CFLAGS += -Wno-error' >> "$DRV/Makefile"
+          grep -q 'obj-$(CONFIG_88XXAU)' "$DRV/Makefile" || { echo "ERROR: driver Makefile obj line not patched"; grep -n 'obj-' "$DRV/Makefile"; exit 1; }
 
-          cat > "$DRV/Kconfig" <<'EOF'
-
-          config 88XXAU
-
-          	tristate "Realtek 8812A/8821A USB WiFi (aircrack-ng)"
-
-          	depends on USB && CFG80211
-
-          EOF
-
-          sed -i '/^endif # WLAN/i source "drivers/net/wireless/rtl8812au/Kconfig"' common/drivers/net/wireless/Kconfig
-
+          printf 'config 88XXAU\n\ttristate "Realtek 8812A/8821A USB WiFi (aircrack-ng)"\n\tdepends on USB\n' > "$DRV/Kconfig"
+          echo 'source "drivers/net/wireless/rtl8812au/Kconfig"' >> common/drivers/net/wireless/Kconfig
           echo 'obj-$(CONFIG_88XXAU) += rtl8812au/' >> common/drivers/net/wireless/Makefile
 
-          CFG=$(grep -rl 'CONFIG_LOCALVERSION="-chickernel' common/arch/arm64/configs common/*.config* 2>/dev/null | head -n1)
+          FILES=$(grep -rl 'CONFIG_LOCALVERSION="-chickernel' common/arch/arm64/configs common/*.config* 2>/dev/null || true)
+          [ -n "$FILES" ] || { echo "ERROR: no config file found"; exit 1; }
+          for CFG in $FILES; do
+            echo "Patching: $CFG"
+            sed -i '/^# CONFIG_SECTION_MISMATCH_WARN_ONLY is not set/d' "$CFG"
+            printf '\nCONFIG_88XXAU=m\nCONFIG_SECTION_MISMATCH_WARN_ONLY=y\n' >> "$CFG"
+          done
 
-          echo "Using config: $CFG"
-
-          sed -i '/^# CONFIG_SECTION_MISMATCH_WARN_ONLY is not set/d' "$CFG"
-
-          printf 'CONFIG_CFG80211=y\nCONFIG_88XXAU=y\nCONFIG_SECTION_MISMATCH_WARN_ONLY=y\n' >> "$CFG"
-
-          grep -n "88XXAU" "$CFG" common/drivers/net/wireless/Makefile common/drivers/net/wireless/Kconfig
-
+          grep -rn "88XXAU" common/drivers/net/wireless/Makefile "$DRV/Kconfig" $FILES
+          grep -n "rtl8812au" common/drivers/net/wireless/Kconfig
+          
       - name: Build, and process the kernel(s)
         working-directory: kernel-build
         env:
