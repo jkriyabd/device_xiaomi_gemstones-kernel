@@ -205,8 +205,8 @@ jobs:
           sed -i '1i ccflags-y += -I$(srctree)/drivers/net/wireless/rtl8821au -Wno-unknown-warning-option -Wno-error -Wno-error=incompatible-function-pointer-types -Wno-error=implicit-function-declaration -Wno-error=int-conversion -Wno-error=return-type -Wno-error=strict-prototypes' ${WL}/rtl8821au/Makefile
 
           printf '\nCONFIG_RTL8821AU=y\nCONFIG_CFI_PERMISSIVE=y\n' \
-            >> common/arch/arm64/configs/chickernel_defconfig
-
+          >> common/arch/arm64/configs/chickernel_defconfig
+          
       - name: Build, and process the kernel(s)
         working-directory: kernel-build
         env:
