@@ -189,7 +189,7 @@ jobs:
           git clone --depth=1 https://github.com/SukiSU-Ultra/SukiSU-Ultra.git \
           common/KernelSU-Next
           
-            - name: Add RTL8821AU driver (TP-Link Archer T2U Plus)
+      - name: Add RTL8821AU driver (TP-Link Archer T2U Plus)
         working-directory: kernel-build
         run: |
           set -e
