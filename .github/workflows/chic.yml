@@ -201,7 +201,8 @@ jobs:
           echo 'obj-$(CONFIG_RTL8821AU) += rtl8821au/' >> ${WL}/Makefile
           grep -q rtl8821au ${WL}/Kconfig || { echo "::error::Kconfig hook failed"; exit 1; }
 
-          sed -i '1i ccflags-y += -Wno-error -Wno-error=incompatible-function-pointer-types -Wno-error=implicit-function-declaration -Wno-error=int-conversion -Wno-error=return-type -Wno-error=strict-prototypes' ${WL}/rtl8821au/Makefile
+          sed -i '/-Wno-enum-int-mismatch/d; /-Wno-stringop-overread/d' ${WL}/rtl8821au/Makefile
+          sed -i '1i ccflags-y += -Wno-unknown-warning-option -Wno-error -Wno-error=incompatible-function-pointer-types -Wno-error=implicit-function-declaration -Wno-error=int-conversion -Wno-error=return-type -Wno-error=strict-prototypes' ${WL}/rtl8821au/Makefile
 
           printf '\nCONFIG_RTL8821AU=y\nCONFIG_CFI_PERMISSIVE=y\n' \
             >> common/arch/arm64/configs/chickernel_defconfig
