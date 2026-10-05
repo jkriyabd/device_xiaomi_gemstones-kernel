@@ -210,6 +210,25 @@ jobs:
           echo 'source "drivers/net/wireless/rtl8812au/Kconfig"' >> common/drivers/net/wireless/Kconfig
           echo 'obj-$(CONFIG_88XXAU) += rtl8812au/' >> common/drivers/net/wireless/Makefile
 
+          # rtl8812au v5.6.4.2 still contains stale sta_info members that were removed
+          # in newer kernels. Strip that legacy cleanup block before build.
+          python3 - "$DRV/core/rtw_ap.c" <<'PY'
+from pathlib import Path
+p = Path(__import__('sys').argv[1])
+text = p.read_text()
+old = '''
+        if ((psta->auth_len != 0) && (psta->pauth_frame != NULL)) {
+                rtw_mfree(psta->pauth_frame, psta->auth_len);
+                psta->pauth_frame = NULL;
+                psta->auth_len = 0;
+        }
+'''
+if 'auth_len' in text and 'pauth_frame' in text and old in text:
+    text = text.replace(old, '\n')
+    p.write_text(text)
+PY
+          grep -n 'auth_len\|pauth_frame' "$DRV/core/rtw_ap.c" || true
+
           FILES=$(grep -rl 'CONFIG_LOCALVERSION="-chickernel' common/arch/arm64/configs common/*.config* 2>/dev/null || true)
           [ -n "$FILES" ] || { echo "ERROR: no config file found"; exit 1; }
           for CFG in $FILES; do
