@@ -319,8 +319,10 @@ jobs:
       - name: Refresh modules list
         working-directory: kernel-build
         run: |
+          set -e
           if [ -f "out/common/modules.order" ]; then
-            cp "out/common/modules.order" "common/android/gki_aarch64_modules"
+            mkdir -p common/android
+            cp -f "out/common/modules.order" "common/android/gki_aarch64_modules"
           else
             echo "ERROR: out/common/modules.order not found"
             exit 1
