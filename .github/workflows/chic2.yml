@@ -274,7 +274,7 @@ jobs:
           grep -rn "88XXAU" common/drivers/net/wireless/Makefile "$DRV/Kconfig" $FILES
           grep -n "rtl8812au" common/drivers/net/wireless/Kconfig
 
-      - name: Build, and process the kernel(s)
+            - name: Build, and process the kernel(s)
         working-directory: kernel-build
         env:
           EXTRA_ARGS: ${{ github.event.inputs.extra_args }}
@@ -288,32 +288,30 @@ jobs:
           for config in ${BUILD_CONFIGS}; do
             echo "Building kernel config: ${config}"
 
-            if [ "${USE_KLEAF}" = true ]; 
-              then
-                if [ "${FAST_BUILD}" = true ]; 
-                  then tools/bazel build ${EXTRA_ARGS} --config=fast //common:${config}
-                  else tools/bazel build ${EXTRA_ARGS} //common:${config}
-                fi
-
-                if [ -f "${OUT_BAZEL_DIR}/${config}/${IMAGE_TYPE}" ]; 
-                  then
-                    sudo chmod 777 -R ${OUT_BAZEL_DIR}/${config}
-                    mv "${OUT_BAZEL_DIR}/${config}/${IMAGE_TYPE}" "${FINAL_DIR}/${IMAGE_TYPE}-${config}"
-                  else
-                    echo "Error: Output image not found for ${config}"
-                    exit 1
-                  fi
-                else
-                  BUILD_CONFIG=common/${config} bash build/build.sh ${EXTRA_ARGS}
-
-                  if [ -f "${OUT_DIR}/dist/${IMAGE_TYPE}" ]; 
-                    then 
-                      mv "${OUT_DIR}/dist/${IMAGE_TYPE}" "${FINAL_DIR}/${IMAGE_TYPE}-${config}"
-                    else
-                      echo "Error: Output image not found for ${config}"
-                      exit 1
-                    fi
+            if [ "${USE_KLEAF}" = true ]; then
+              if [ "${FAST_BUILD}" = true ]; then
+                tools/bazel build ${EXTRA_ARGS} --config=fast //common:${config}
+              else
+                tools/bazel build ${EXTRA_ARGS} //common:${config}
               fi
+
+              if [ -f "${OUT_BAZEL_DIR}/${config}/${IMAGE_TYPE}" ]; then
+                sudo chmod 777 -R ${OUT_BAZEL_DIR}/${config}
+                mv "${OUT_BAZEL_DIR}/${config}/${IMAGE_TYPE}" "${FINAL_DIR}/${IMAGE_TYPE}-${config}"
+              else
+                echo "Error: Output image not found for ${config}"
+                exit 1
+              fi
+            else
+              BUILD_CONFIG=common/${config} bash build/build.sh ${EXTRA_ARGS}
+
+              if [ -f "${OUT_DIR}/dist/${IMAGE_TYPE}" ]; then
+                mv "${OUT_DIR}/dist/${IMAGE_TYPE}" "${FINAL_DIR}/${IMAGE_TYPE}-${config}"
+              else
+                echo "Error: Output image not found for ${config}"
+                exit 1
+              fi
+            fi
           done
 
       - name: Refresh modules list
