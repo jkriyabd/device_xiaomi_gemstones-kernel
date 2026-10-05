@@ -231,6 +231,24 @@ jobs:
           PY
           grep -n 'auth_len\|pauth_frame' "$DRV/core/rtw_ap.c" || true
 
+          # Newer kernels removed the legacy wiphy_net()/adapter->wiphy pattern used by
+          # upstream rtl8812au. Guard it so the kernel build can proceed on 5.15-based trees.
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('common/drivers/net/wireless/rtl8812au/os_dep/linux/os_intfs.c')
+          text = p.read_text()
+
+          old = "dev_net_set(ndev, wiphy_net(adapter_to_wiphy(adapter)));"
+          new = """#if defined(CONFIG_CFG80211) && defined(wiphy_net)\n\tdev_net_set(ndev, wiphy_net(adapter_to_wiphy(adapter)));\n#else\n\tdev_net_set(ndev, &init_net);\n#endif"""
+
+          if old in text:
+              text = text.replace(old, new)
+              p.write_text(text)
+              print('Patched rtl8812au net namespace compatibility block')
+          else:
+              print('No legacy rtl8812au wiphy_net call found; skipping compatibility patch')
+          PY
+
           # Remove the stale NL80211_AUTHTYPE_SAE macro from rtl8812au, and replace
           # any remaining references in the upstream driver with a safe fallback.
           # Newer kernels already define this enum value in <uapi/linux/nl80211.h>.
