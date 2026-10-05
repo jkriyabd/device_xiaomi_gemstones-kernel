@@ -316,6 +316,16 @@ jobs:
               fi
           done
 
+      - name: Refresh modules list
+        working-directory: kernel-build
+        run: |
+          if [ -f "out/common/modules.order" ]; then
+            cp "out/common/modules.order" "common/android/gki_aarch64_modules"
+          else
+            echo "ERROR: out/common/modules.order not found"
+            exit 1
+          fi
+
       - name: Collect 88XXau.ko
         working-directory: kernel-build
         run: |
