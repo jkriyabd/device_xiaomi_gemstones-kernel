@@ -75,7 +75,7 @@ jobs:
         run: |
           AK3_GIT_URL=$(echo "${AK3_GIT_URL_PLUS_BRANCH}" | awk '{print $1}')
           AK3_GIT_BRANCH=$(echo "${AK3_GIT_URL_PLUS_BRANCH}" | awk '{print $2}')
-          
+
           # Export these variables while we're at it
           echo "AK3_GIT_URL=${AK3_GIT_URL}" >> ${GITHUB_ENV}
           echo "AK3_GIT_BRANCH=${AK3_GIT_BRANCH}" >> ${GITHUB_ENV}
@@ -86,7 +86,7 @@ jobs:
                 echo "Invalid URL: $1"
                 echo "URL must be a valid HTTPS git repository URL"
                 exit 1
-            fi
+              fi
           }
 
           validate_url ${COMMON_REPO}
@@ -98,7 +98,7 @@ jobs:
                 echo "::error::Invalid $2: $1"
                 echo "$2 must be a single word without spaces"
                 exit 1
-            fi
+              fi
           }
 
           validate_single_word "${ACK_BRANCH}" \
@@ -188,7 +188,7 @@ jobs:
           rm -rf common/KernelSU-Next
           git clone --depth=1 https://github.com/SukiSU-Ultra/SukiSU-Ultra.git \
           common/KernelSU-Next
-          
+
       - name: Add RTL8821AU driver
         working-directory: kernel-build
         run: |
@@ -213,20 +213,22 @@ jobs:
           # rtl8812au v5.6.4.2 still contains stale sta_info members that were removed
           # in newer kernels. Strip that legacy cleanup block before build.
           python3 - "$DRV/core/rtw_ap.c" <<'PY'
-from pathlib import Path
-p = Path(__import__('sys').argv[1])
-text = p.read_text()
-old = '''
-        if ((psta->auth_len != 0) && (psta->pauth_frame != NULL)) {
-                rtw_mfree(psta->pauth_frame, psta->auth_len);
-                psta->pauth_frame = NULL;
-                psta->auth_len = 0;
-        }
-'''
-if 'auth_len' in text and 'pauth_frame' in text and old in text:
-    text = text.replace(old, '\n')
-    p.write_text(text)
-PY
+          from pathlib import Path
+          import re
+          import sys
+
+          p = Path(sys.argv[1])
+          text = p.read_text()
+
+          pattern = r'\s*if\s*\(\s*\(\s*psta\s*->\s*auth_len\s*!=\s*0\s*\)\s*&&\s*\(\s*psta\s*->\s*pauth_frame\s*!=\s*NULL\s*\)\s*\)\s*\{.*?\n\s*\}'
+          text, count = re.subn(pattern, '', text, flags=re.DOTALL)
+
+          if count:
+              p.write_text(text)
+              print(f"Removed stale auth block from {p}")
+          else:
+              print(f"No stale auth block found in {p}")
+          PY
           grep -n 'auth_len\|pauth_frame' "$DRV/core/rtw_ap.c" || true
 
           FILES=$(grep -rl 'CONFIG_LOCALVERSION="-chickernel' common/arch/arm64/configs common/*.config* 2>/dev/null || true)
@@ -239,7 +241,7 @@ PY
 
           grep -rn "88XXAU" common/drivers/net/wireless/Makefile "$DRV/Kconfig" $FILES
           grep -n "rtl8812au" common/drivers/net/wireless/Kconfig
-          
+
       - name: Build, and process the kernel(s)
         working-directory: kernel-build
         env:
@@ -253,7 +255,7 @@ PY
 
           for config in ${BUILD_CONFIGS}; do
             echo "Building kernel config ${config+1}: ${config}"
-            
+
             if [ "${USE_KLEAF}" = true ]; 
               then
                 if [ "${FAST_BUILD}" = true ]; 
@@ -268,20 +270,20 @@ PY
                   else
                     echo "Error: Output image not found for ${config}"
                     exit 1
-                fi
-              else
-                BUILD_CONFIG=common/${config} ${EXTRA_ARGS} build/build.sh
+                  fi
+                else
+                  BUILD_CONFIG=common/${config} ${EXTRA_ARGS} build/build.sh
 
-                if [ -f "${OUT_DIR}/dist/${IMAGE_TYPE}" ]; 
-                  then 
-                    mv "${OUT_DIR}/dist/${IMAGE_TYPE}" "${FINAL_DIR}/${IMAGE_TYPE}-${config}"
-                  else
-                    echo "Error: Output image not found for ${config}"
-                    exit 1
-                fi
-            fi
+                  if [ -f "${OUT_DIR}/dist/${IMAGE_TYPE}" ]; 
+                    then 
+                      mv "${OUT_DIR}/dist/${IMAGE_TYPE}" "${FINAL_DIR}/${IMAGE_TYPE}-${config}"
+                    else
+                      echo "Error: Output image not found for ${config}"
+                      exit 1
+                    fi
+              fi
           done
-          
+
       - name: Collect 88XXau.ko
         working-directory: kernel-build
         run: |
@@ -297,10 +299,10 @@ PY
             if [ -f "${FINAL_DIR}/${IMAGE_TYPE}-${config}" ]; then
               cp -r "${AK3_DIR}" "${AK3_DIR}-${config}"
               cd "${AK3_DIR}-${config}"
-              
+
               cp "${FINAL_DIR}/${IMAGE_TYPE}-${config}" "${AK3_DIR}-${config}/${IMAGE_TYPE}"
               zip -r9 "${FINAL_DIR}/${config}.zip" * -x .git README.md *placeholder
-              
+
               cd ..
             fi
           done
