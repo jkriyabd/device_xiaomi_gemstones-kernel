@@ -201,7 +201,7 @@ jobs:
           sed -i 's/^CONFIG_PLATFORM_I386_PC *=.*/CONFIG_PLATFORM_I386_PC = n/' "$DRV/Makefile"
           sed -i 's/^obj-\$(CONFIG_[A-Za-z0-9_]*) *[:+]*= *\$(MODULE_NAME)\.o/obj-$(CONFIG_88XXAU) += $(MODULE_NAME).o/' "$DRV/Makefile"
           sed -i 's/-Wno-stringop-overread//g; s/-Wno-stringop-overflow//g; s/-Wno-maybe-uninitialized//g' "$DRV/Makefile"
-          echo "--- remaining -W flags in driver Makefile ---"
+          echo '--- remaining -W flags in driver Makefile ---'
           grep -n -- '-W' "$DRV/Makefile" || true
           echo 'EXTRA_CFLAGS += -Wno-error' >> "$DRV/Makefile"
           grep -q 'obj-$(CONFIG_88XXAU)' "$DRV/Makefile" || { echo "ERROR: driver Makefile obj line not patched"; grep -n 'obj-' "$DRV/Makefile"; exit 1; }
@@ -231,10 +231,17 @@ jobs:
           PY
           grep -n 'auth_len\|pauth_frame' "$DRV/core/rtw_ap.c" || true
 
-          # Remove the stale NL80211_AUTHTYPE_SAE macro from rtl8812au; newer kernels
-          # already define this enum value in <uapi/linux/nl80211.h>.
+          # Remove the stale NL80211_AUTHTYPE_SAE macro from rtl8812au, and replace
+          # any remaining references in the upstream driver with a safe fallback.
+          # Newer kernels already define this enum value in <uapi/linux/nl80211.h>.
           if [ -f "$DRV/include/rtw_mlme_ext.h" ]; then
             grep -n 'NL80211_AUTHTYPE_SAE' "$DRV/include/rtw_mlme_ext.h" && sed -i '/^#define NL80211_AUTHTYPE_SAE/d' "$DRV/include/rtw_mlme_ext.h" || true
+          fi
+          if [ -f "$DRV/core/rtw_ap.c" ]; then
+            grep -RIn 'NL80211_AUTHTYPE_SAE' "$DRV" || true
+            grep -RIl 'NL80211_AUTHTYPE_SAE' "$DRV" | while IFS= read -r f; do
+              sed -i 's/NL80211_AUTHTYPE_SAE/0/g' "$f"
+            done
           fi
 
           FILES=$(grep -rl 'CONFIG_LOCALVERSION="-chickernel' common/arch/arm64/configs common/*.config* 2>/dev/null || true)
