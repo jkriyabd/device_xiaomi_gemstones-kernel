@@ -231,6 +231,12 @@ jobs:
           PY
           grep -n 'auth_len\|pauth_frame' "$DRV/core/rtw_ap.c" || true
 
+          # Remove the stale NL80211_AUTHTYPE_SAE macro from rtl8812au; newer kernels
+          # already define this enum value in <uapi/linux/nl80211.h>.
+          if [ -f "$DRV/include/rtw_mlme_ext.h" ]; then
+            grep -n 'NL80211_AUTHTYPE_SAE' "$DRV/include/rtw_mlme_ext.h" && sed -i '/^#define NL80211_AUTHTYPE_SAE/d' "$DRV/include/rtw_mlme_ext.h" || true
+          fi
+
           FILES=$(grep -rl 'CONFIG_LOCALVERSION="-chickernel' common/arch/arm64/configs common/*.config* 2>/dev/null || true)
           [ -n "$FILES" ] || { echo "ERROR: no config file found"; exit 1; }
           for CFG in $FILES; do
