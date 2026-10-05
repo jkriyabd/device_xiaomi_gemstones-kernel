@@ -266,9 +266,9 @@ jobs:
           FILES=$(grep -rl 'CONFIG_LOCALVERSION="-chickernel' common/arch/arm64/configs common/*.config* 2>/dev/null || true)
           [ -n "$FILES" ] || { echo "ERROR: no config file found"; exit 1; }
           for CFG in $FILES; do
-            echo "Patching: $CFG"
-            sed -i '/^# CONFIG_SECTION_MISMATCH_WARN_ONLY is not set/d' "$CFG"
-            printf '\nCONFIG_88XXAU=m\nCONFIG_CFG80211=y\nCONFIG_SECTION_MISMATCH_WARN_ONLY=y\n' >> "$CFG"
+          echo "Patching: $CFG"
+          sed -i '/^# CONFIG_SECTION_MISMATCH_WARN_ONLY is not set/d' "$CFG"
+          printf '\nCONFIG_88XXAU=m\nCONFIG_CFG80211=y\nCONFIG_SECTION_MISMATCH_WARN_ONLY=y\n' >> "$CFG"
           done
 
           grep -rn "88XXAU" common/drivers/net/wireless/Makefile "$DRV/Kconfig" $FILES
