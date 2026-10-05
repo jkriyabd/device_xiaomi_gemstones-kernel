@@ -322,15 +322,22 @@ jobs:
             mkdir -p common/android
             cp -f "out/common/modules.order" "common/android/gki_aarch64_modules"
 
+            MOD_ENTRY='drivers/net/wireless/rtl8812au/88XXau.ko'
+            if ! grep -qxF "$MOD_ENTRY" common/android/gki_aarch64_modules; then
+              printf '%s\n' "$MOD_ENTRY" >> common/android/gki_aarch64_modules
+            fi
+
             python3 - <<'PY'
-          from pathlib import Path
-          p = Path('common/android/gki_aarch64_modules')
-          if p.exists():
-          text = p.read_text()
-          if not text.endswith('\n'):
-          p.write_text(text + '\n')
-          print('Ensured trailing newline in gki_aarch64_modules')
-          PY
+from pathlib import Path
+p = Path('common/android/gki_aarch64_modules')
+if p.exists():
+    text = p.read_text()
+    if not text.endswith('\n'):
+        p.write_text(text + '\n')
+    print('Ensured trailing newline in gki_aarch64_modules')
+else:
+    raise SystemExit('ERROR: common/android/gki_aarch64_modules missing after copy')
+PY
           else
             echo "ERROR: out/common/modules.order not found"
             exit 1
