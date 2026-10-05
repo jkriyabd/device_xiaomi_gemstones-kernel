@@ -268,7 +268,7 @@ jobs:
           for CFG in $FILES; do
             echo "Patching: $CFG"
             sed -i '/^# CONFIG_SECTION_MISMATCH_WARN_ONLY is not set/d' "$CFG"
-            printf '\nCONFIG_88XXAU=m\nCONFIG_SECTION_MISMATCH_WARN_ONLY=y\n' >> "$CFG"
+            printf '\nCONFIG_88XXAU=m\nCONFIG_CFG80211=y\nCONFIG_SECTION_MISMATCH_WARN_ONLY=y\n' >> "$CFG"
           done
 
           grep -rn "88XXAU" common/drivers/net/wireless/Makefile "$DRV/Kconfig" $FILES
