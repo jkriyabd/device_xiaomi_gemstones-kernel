@@ -1,3 +1,4 @@
+
 name: Build Android Common Kernel GPT
 
 concurrency:
@@ -82,6 +83,10 @@ jobs:
 
     steps:
 
+      # ============================================================
+      # Validate inputs
+      # ============================================================
+
       - name: Validate inputs
         run: |
           set -e
@@ -125,10 +130,16 @@ jobs:
           validate_single_word "${IMAGE_TYPE}" \
             "Kernel image type"
 
+
+      # ============================================================
+      # Setup workspace + manifest
+      # ============================================================
+
       - name: Setup build workspace and a local manifest
         env:
           USE_LATEST_CLANG: ${{ github.event.inputs.use_latest_clang }}
           CUSTOM_MANIFEST: .repo/local_manifests/custom.xml
+
         run: |
           set -e
 
@@ -147,9 +158,12 @@ jobs:
 
           mecho '<?xml version="1.0" encoding="UTF-8"?>'
           mecho '<manifest>'
+
           mecho "  <remote name=\"common-repo\" fetch=\"https://${REPO_SOURCE}/${REPO_OWNER}\" />"
           mecho ''
+
           mecho '  <remove-project name="kernel/common" />'
+
           mecho "  <project path=\"common\" name=\"${REPO_NAME}\" remote=\"common-repo\" revision=\"${COMMON_REPO_BRANCH}\" >"
           mecho '    <linkfile src="." dest=".source_date_epoch_dir" />'
           mecho '  </project>'
@@ -161,8 +175,14 @@ jobs:
 
           mecho '</manifest>'
 
+
+      # ============================================================
+      # Download build utilities
+      # ============================================================
+
       - name: Download build utilities
         working-directory: kernel-build
+
         run: |
           set -e
 
@@ -184,13 +204,25 @@ jobs:
             -o ~/.bin/repo
 
           chmod a+rx ~/.bin/repo
+
           echo "${HOME}/.bin" >> "${GITHUB_PATH}"
+
+
+      # ============================================================
+      # Cleanup runner
+      # ============================================================
 
       - name: Clean up container
         uses: rokibhasansagar/slimhub_actions@main
 
+
+      # ============================================================
+      # Initialize Android Common Kernel
+      # ============================================================
+
       - name: Initialize the manifest, and sync
         working-directory: kernel-build
+
         run: |
           set -e
 
@@ -210,8 +242,14 @@ jobs:
             --fetch-submodules \
             -j"$(nproc --all)"
 
+
+      # ============================================================
+      # SukiSU Ultra
+      # ============================================================
+
       - name: Clone SukiSU Ultra
         working-directory: kernel-build
+
         run: |
           set -e
 
@@ -222,12 +260,24 @@ jobs:
             https://github.com/SukiSU-Ultra/SukiSU-Ultra.git \
             common/KernelSU-Next
 
+
+      # ============================================================
+      # RTL8812AU v5.6.4.2
+      # ============================================================
+
       - name: Add RTL8812AU driver
         working-directory: kernel-build
+
         run: |
           set -e
 
           DRV=common/drivers/net/wireless/rtl8812au
+
+          echo "================================================"
+          echo "Cloning RTL8812AU v5.6.4.2"
+          echo "================================================"
+
+          rm -rf "$DRV"
 
           git clone \
             --depth=1 \
@@ -236,6 +286,10 @@ jobs:
             "$DRV"
 
           rm -rf "$DRV/.git"
+
+          # --------------------------------------------------------
+          # Driver Makefile
+          # --------------------------------------------------------
 
           sed -i \
             's/^CONFIG_PLATFORM_I386_PC *=.*/CONFIG_PLATFORM_I386_PC = n/' \
@@ -249,16 +303,23 @@ jobs:
             's/-Wno-stringop-overread//g; s/-Wno-stringop-overflow//g; s/-Wno-maybe-uninitialized//g' \
             "$DRV/Makefile"
 
-          echo '--- remaining -W flags in driver Makefile ---'
-          grep -n -- '-W' "$DRV/Makefile" || true
-
           echo 'EXTRA_CFLAGS += -Wno-error' >> "$DRV/Makefile"
 
-          grep -q 'obj-$(CONFIG_88XXAU)' "$DRV/Makefile" || {
-            echo "ERROR: driver Makefile obj line not patched"
-            grep -n 'obj-' "$DRV/Makefile"
+          echo "--- RTL8812AU Makefile ---"
+          grep -nE \
+            'CONFIG_PLATFORM_I386_PC|obj-\$\(CONFIG_88XXAU\)|EXTRA_CFLAGS' \
+            "$DRV/Makefile" || true
+
+          if ! grep -q 'obj-$(CONFIG_88XXAU)' "$DRV/Makefile"; then
+            echo "ERROR: RTL8812AU Makefile was not patched correctly"
+            grep -n 'obj-' "$DRV/Makefile" || true
             exit 1
-          }
+          fi
+
+
+          # --------------------------------------------------------
+          # Kconfig
+          # --------------------------------------------------------
 
           printf '%s\n' \
             'config 88XXAU' \
@@ -271,6 +332,11 @@ jobs:
 
           echo 'obj-$(CONFIG_88XXAU) += rtl8812au/' \
             >> common/drivers/net/wireless/Makefile
+
+
+          # --------------------------------------------------------
+          # Remove stale auth block
+          # --------------------------------------------------------
 
           python3 - "$DRV/core/rtw_ap.c" <<'PY'
           from pathlib import Path
@@ -302,6 +368,11 @@ jobs:
 
           grep -n 'auth_len\|pauth_frame' \
             "$DRV/core/rtw_ap.c" || true
+
+
+          # --------------------------------------------------------
+          # wiphy_net compatibility
+          # --------------------------------------------------------
 
           python3 - <<'PY'
           from pathlib import Path
@@ -336,6 +407,11 @@ jobs:
               )
           PY
 
+
+          # --------------------------------------------------------
+          # NL80211_AUTHTYPE_SAE compatibility
+          # --------------------------------------------------------
+
           if [ -f "$DRV/include/rtw_mlme_ext.h" ]; then
             sed -i \
               '/^#ifndef NL80211_AUTHTYPE_SAE/,/^#endif/d' \
@@ -361,6 +437,11 @@ jobs:
             done
           fi
 
+
+          # --------------------------------------------------------
+          # Kernel configuration
+          # --------------------------------------------------------
+
           FILES=$(
             grep -rl \
               'CONFIG_LOCALVERSION="-chickernel' \
@@ -370,20 +451,34 @@ jobs:
           )
 
           [ -n "$FILES" ] || {
-            echo "ERROR: no config file found"
+            echo "ERROR: no chickernel config file found"
             exit 1
           }
 
           for CFG in $FILES; do
-            echo "Patching: $CFG"
+            echo "Patching config: $CFG"
 
             sed -i \
               '/^# CONFIG_SECTION_MISMATCH_WARN_ONLY is not set/d' \
               "$CFG"
 
+            sed -i \
+              '/^CONFIG_88XXAU=/d' \
+              "$CFG"
+
+            sed -i \
+              '/^CONFIG_CFG80211=/d' \
+              "$CFG"
+
             printf '\nCONFIG_88XXAU=m\nCONFIG_CFG80211=y\nCONFIG_SECTION_MISMATCH_WARN_ONLY=y\n' \
               >> "$CFG"
           done
+
+
+          echo
+          echo "================================================"
+          echo "RTL8812AU configuration"
+          echo "================================================"
 
           grep -rn \
             "88XXAU" \
@@ -395,181 +490,207 @@ jobs:
             "rtl8812au" \
             common/drivers/net/wireless/Kconfig
 
-      # Android GKI denies direct driver file I/O.
-      # rtl8812au v5.6.4.2 contains filp_open/kernel_read/kernel_write
-      # in os_dep/osdep_service.c. Disable those legacy file APIs so
-      # the module does not reference forbidden GKI symbols.
+
+      # ============================================================
+      # IMPORTANT:
+      # Disable only the legacy direct filesystem helpers.
+      #
+      # Upstream v5.6.4.2 has this structure:
+      #
+      #   openFile()
+      #   closeFile()
+      #   readFile()
+      #   writeFile()
+      #   isFileReadable()
+      #   retriveFromFile()
+      #   storeToFile()
+      #
+      # These use:
+      #   filp_open()
+      #   kernel_read()
+      #   kernel_write()
+      #
+      # Android GKI rejects those direct driver filesystem APIs.
+      # ============================================================
+
       - name: Disable RTL8812AU direct file I/O
         working-directory: kernel-build
+
         run: |
           set -e
 
-          python3 - <<'PY'
+          DRV="common/drivers/net/wireless/rtl8812au"
+          FILE="$DRV/os_dep/osdep_service.c"
+
+          echo "================================================"
+          echo "Disabling RTL8812AU direct filesystem I/O"
+          echo "================================================"
+
+          if [ ! -f "$FILE" ]; then
+            echo "ERROR: $FILE not found"
+            exit 1
+          fi
+
+          python3 - "$FILE" <<'PY'
           from pathlib import Path
+          import re
+          import sys
 
-          p = Path(
-              "common/drivers/net/wireless/rtl8812au/os_dep/osdep_service.c"
-          )
-
+          p = Path(sys.argv[1])
           text = p.read_text()
 
-          helper_start = text.find(
+          start_marker = (
               "#ifdef PLATFORM_LINUX\n"
               "/*\n"
               " * Open a file with the specific @param path"
           )
 
-          if helper_start < 0:
+          start = text.find(start_marker)
+
+          if start < 0:
               raise SystemExit(
-                  "ERROR: RTL8812AU file-I/O helper block not found"
+                  "ERROR: Could not locate RTL8812AU "
+                  "file-I/O helper start marker"
               )
 
-          helper_end_marker = "#endif /* PLATFORM_LINUX */"
-          helper_end = text.find(
-              helper_end_marker,
-              helper_start
+          end_marker = "#endif /* PLATFORM_LINUX */"
+
+          end = text.find(
+              end_marker,
+              start
           )
 
-          if helper_end < 0:
+          if end < 0:
               raise SystemExit(
-                  "ERROR: RTL8812AU file-I/O helper block end not found"
+                  "ERROR: Could not locate RTL8812AU "
+                  "file-I/O helper end marker"
               )
 
-          helper_end += len(helper_end_marker)
+          end += len(end_marker)
 
-          replacement = """#ifdef PLATFORM_LINUX
-          /*
-           * Android GKI does not allow kernel drivers to perform
-           * direct filesystem access.
-           *
-           * The original rtl8812au implementation used:
-           *   filp_open()
-           *   kernel_read()
-           *   kernel_write()
-           *
-           * Those APIs are intentionally disabled here.
-           */
-          #endif /* PLATFORM_LINUX */"""
+          replacement = r'''#ifdef PLATFORM_LINUX
+
+/*
+ * Android GKI does not allow kernel drivers to perform
+ * direct filesystem access.
+ *
+ * The original rtl8812au implementation used:
+ *
+ *   filp_open()
+ *   kernel_read()
+ *   kernel_write()
+ *
+ * Those legacy helpers are intentionally disabled for
+ * Android GKI builds.
+ */
+
+static int isFileReadable(const char *path, u32 *sz)
+{
+	(void)path;
+
+	if (sz)
+		*sz = 0;
+
+	return -ENOENT;
+}
+
+static int retriveFromFile(const char *path, u8 *buf, u32 sz)
+{
+	(void)path;
+	(void)buf;
+	(void)sz;
+
+	return -ENOENT;
+}
+
+static int storeToFile(const char *path, u8 *buf, u32 sz)
+{
+	(void)path;
+	(void)buf;
+	(void)sz;
+
+	return -ENOENT;
+}
+
+#endif /* PLATFORM_LINUX */'''
 
           text = (
-              text[:helper_start]
+              text[:start]
               + replacement
-              + text[helper_end:]
-          )
-
-          public_start = text.find(
-              "int rtw_is_file_readable(const char *path)"
-          )
-
-          public_end = text.find(
-              "#ifdef PLATFORM_LINUX\nstruct net_device *rtw_alloc_etherdev_with_old_priv",
-              public_start
-          )
-
-          if public_start < 0:
-              raise SystemExit(
-                  "ERROR: RTL8812AU public file API block not found"
-              )
-
-          if public_end < 0:
-              raise SystemExit(
-                  "ERROR: RTL8812AU public file API block end not found"
-              )
-
-          public_replacement = """int rtw_is_file_readable(const char *path)
-          {
-          	(void)path;
-          	return _FALSE;
-          }
-
-          int rtw_is_file_readable_with_size(
-          	const char *path,
-          	u32 *sz
-          )
-          {
-          	(void)path;
-
-          	if (sz)
-          		*sz = 0;
-
-          	return _FALSE;
-          }
-
-          int rtw_retrieve_from_file(
-          	const char *path,
-          	u8 *buf,
-          	u32 sz
-          )
-          {
-          	(void)path;
-          	(void)buf;
-          	(void)sz;
-
-          	return 0;
-          }
-
-          int rtw_store_to_file(
-          	const char *path,
-          	u8 *buf,
-          	u32 sz
-          )
-          {
-          	(void)path;
-          	(void)buf;
-          	(void)sz;
-
-          	return 0;
-          }
-
-          """
-
-          text = (
-              text[:public_start]
-              + public_replacement
-              + text[public_end:]
+              + text[end:]
           )
 
           p.write_text(text)
 
           print(
-              "Disabled RTL8812AU direct filesystem access APIs"
+              "Successfully replaced the RTL8812AU "
+              "direct file-I/O helper implementation"
           )
           PY
 
+
           echo
-          echo "--- Checking forbidden GKI file-I/O references ---"
-
-          if grep -nE \
-            '\b(filp_open|kernel_read|kernel_write)\s*\(' \
-            common/drivers/net/wireless/rtl8812au/os_dep/osdep_service.c
-          then
-            echo "ERROR: forbidden file-I/O API reference remains"
-            exit 1
-          fi
-
-          echo "OK: no filp_open/kernel_read/kernel_write calls remain"
-
-      - name: Verify RTL8812AU forbidden symbols
-        working-directory: kernel-build
-        run: |
-          set -e
-
-          DRV="common/drivers/net/wireless/rtl8812au"
-
-          echo "--- Checking entire RTL8812AU source ---"
+          echo "================================================"
+          echo "Checking forbidden file-I/O calls"
+          echo "================================================"
 
           if grep -RInE \
             '\b(filp_open|kernel_read|kernel_write)\s*\(' \
             "$DRV"
           then
-            echo "ERROR: forbidden GKI file-I/O reference found"
+            echo
+            echo "ERROR: Forbidden GKI file-I/O API reference remains"
+            echo
+            exit 1
+          fi
+
+          echo "OK: No filp_open/kernel_read/kernel_write calls remain"
+
+
+      # ============================================================
+      # Verify the whole RTL8812AU source tree
+      # ============================================================
+
+      - name: Verify RTL8812AU forbidden symbols
+        working-directory: kernel-build
+
+        run: |
+          set -e
+
+          DRV="common/drivers/net/wireless/rtl8812au"
+
+          echo "================================================"
+          echo "RTL8812AU forbidden symbol verification"
+          echo "================================================"
+
+          FORBIDDEN='filp_open|kernel_read|kernel_write'
+
+          if grep -RInE \
+            "\b(${FORBIDDEN})\s*\(" \
+            "$DRV"
+          then
+            echo
+            echo "ERROR: Forbidden GKI file-I/O reference found"
             exit 1
           fi
 
           echo "OK: RTL8812AU source has no forbidden file-I/O calls"
 
+
+      # ============================================================
+      # KMI / ABI symbol list
+      #
+      # DO NOT add:
+      #   filp_open
+      #   kernel_read
+      #   kernel_write
+      #
+      # They are forbidden by Android GKI.
+      # ============================================================
+
       - name: Fix RTL8812AU KMI symbol list
         working-directory: kernel-build
+
         run: |
           set -e
 
@@ -584,6 +705,11 @@ jobs:
           echo "Using KMI symbol list:"
           echo "$SYMBOL_LIST"
 
+
+          # --------------------------------------------------------
+          # Only the radiotap symbol required by this driver.
+          # --------------------------------------------------------
+
           REQUIRED_SYMBOLS="
           ieee80211_radiotap_iterator_init
           "
@@ -597,6 +723,11 @@ jobs:
             fi
           done
 
+
+          # --------------------------------------------------------
+          # Make absolutely sure forbidden symbols are NOT added.
+          # --------------------------------------------------------
+
           echo
           echo "--- RTL8812AU KMI symbols ---"
 
@@ -605,13 +736,14 @@ jobs:
             "$SYMBOL_LIST" || true
 
           echo
-          echo "--- Checking forbidden symbols are absent ---"
+          echo "--- Checking forbidden symbols ---"
 
           if grep -nE \
             '^(filp_open|kernel_read|kernel_write)$' \
             "$SYMBOL_LIST"
           then
-            echo "ERROR: forbidden symbol exists in KMI list"
+            echo
+            echo "ERROR: forbidden file-I/O symbol exists in KMI list"
             exit 1
           fi
 
@@ -620,8 +752,124 @@ jobs:
           echo
           echo "--- End KMI symbol list check ---"
 
+
+      # ============================================================
+      # Register RTL8812AU module BEFORE the kernel build.
+      #
+      # This is important because doing it only AFTER the build
+      # cannot help a GKI module/ABI validation performed during
+      # the build.
+      # ============================================================
+
+      - name: Register RTL8812AU module before build
+        working-directory: kernel-build
+
+        run: |
+          set -e
+
+          MODULE_LIST="common/android/gki_aarch64_modules"
+          MOD_ENTRY="drivers/net/wireless/rtl8812au/88XXau.ko"
+
+          echo "================================================"
+          echo "Registering RTL8812AU in GKI module list"
+          echo "================================================"
+
+          if [ ! -f "$MODULE_LIST" ]; then
+            echo "WARNING: $MODULE_LIST does not exist yet."
+            echo "Creating it."
+
+            mkdir -p "$(dirname "$MODULE_LIST")"
+            touch "$MODULE_LIST"
+          fi
+
+          if grep -qxF "$MOD_ENTRY" "$MODULE_LIST"; then
+            echo "Already registered:"
+            echo "$MOD_ENTRY"
+          else
+            printf '%s\n' "$MOD_ENTRY" >> "$MODULE_LIST"
+            echo "Added:"
+            echo "$MOD_ENTRY"
+          fi
+
+          echo
+          echo "--- RTL8812AU module entry ---"
+
+          grep -nF \
+            "$MOD_ENTRY" \
+            "$MODULE_LIST" || true
+
+
+          # --------------------------------------------------------
+          # Never add ABI symbols here.
+          # --------------------------------------------------------
+
+          if grep -nE \
+            '^(filp_open|kernel_read|kernel_write)$' \
+            "$MODULE_LIST"
+          then
+            echo
+            echo "ERROR: ABI symbols were incorrectly added to module list"
+            exit 1
+          fi
+
+          echo
+          echo "OK: module list contains module entry only"
+
+
+      # ============================================================
+      # Final source sanity check before compiling
+      # ============================================================
+
+      - name: Final RTL8812AU pre-build check
+        working-directory: kernel-build
+
+        run: |
+          set -e
+
+          DRV="common/drivers/net/wireless/rtl8812au"
+
+          echo "================================================"
+          echo "Final RTL8812AU pre-build check"
+          echo "================================================"
+
+          test -f "$DRV/Makefile"
+          test -f "$DRV/Kconfig"
+          test -f "$DRV/os_dep/osdep_service.c"
+
+          if ! grep -q \
+            'obj-$(CONFIG_88XXAU)' \
+            "$DRV/Makefile"
+          then
+            echo "ERROR: CONFIG_88XXAU Makefile entry missing"
+            exit 1
+          fi
+
+          if ! grep -q \
+            'config 88XXAU' \
+            "$DRV/Kconfig"
+          then
+            echo "ERROR: 88XXAU Kconfig entry missing"
+            exit 1
+          fi
+
+          if grep -RInE \
+            '\b(filp_open|kernel_read|kernel_write)\s*\(' \
+            "$DRV"
+          then
+            echo "ERROR: forbidden file-I/O call remains"
+            exit 1
+          fi
+
+          echo "OK: RTL8812AU is ready for GKI build"
+
+
+      # ============================================================
+      # Build kernel
+      # ============================================================
+
       - name: Build, and process the kernel(s)
         working-directory: kernel-build
+
         env:
           EXTRA_ARGS: ${{ github.event.inputs.extra_args }}
           FAST_BUILD: ${{ github.event.inputs.fast_build }}
@@ -635,6 +883,7 @@ jobs:
           mkdir -p "${FINAL_DIR}"
 
           for config in ${BUILD_CONFIGS}; do
+
             echo
             echo "========================================"
             echo "Building kernel config: ${config}"
@@ -654,15 +903,19 @@ jobs:
               fi
 
               if [ -f "${OUT_BAZEL_DIR}/${config}/${IMAGE_TYPE}" ]; then
+
                 sudo chmod 777 -R \
                   "${OUT_BAZEL_DIR}/${config}"
 
                 mv \
                   "${OUT_BAZEL_DIR}/${config}/${IMAGE_TYPE}" \
                   "${FINAL_DIR}/${IMAGE_TYPE}-${config}"
+
               else
-                echo "Error: Output image not found for ${config}"
+
+                echo "ERROR: Output image not found for ${config}"
                 exit 1
+
               fi
 
             else
@@ -671,49 +924,136 @@ jobs:
                 bash build/build.sh ${EXTRA_ARGS}
 
               if [ -f "${OUT_DIR}/dist/${IMAGE_TYPE}" ]; then
+
                 mv \
                   "${OUT_DIR}/dist/${IMAGE_TYPE}" \
                   "${FINAL_DIR}/${IMAGE_TYPE}-${config}"
+
               else
-                echo "Error: Output image not found for ${config}"
+
+                echo "ERROR: Output image not found for ${config}"
                 exit 1
+
               fi
 
             fi
+
           done
 
-      - name: Refresh modules list
+
+      # ============================================================
+      # Verify generated module
+      # ============================================================
+
+      - name: Verify generated RTL8812AU module
         working-directory: kernel-build
+
         run: |
           set -e
 
+          echo "================================================"
+          echo "Searching for 88XXau.ko"
+          echo "================================================"
+
+          KO=$(find out -type f -name '88XXau.ko' | head -n1)
+
+          if [ -z "$KO" ]; then
+            echo "ERROR: 88XXau.ko was not built"
+            echo
+            echo "Searching for any RTL8812AU module:"
+            find out -type f \
+              \( -name '*88XXau*.ko' -o -name '*8812au*.ko' \) \
+              -print || true
+            exit 1
+          fi
+
+          echo "RTL8812AU module:"
+          echo "$KO"
+
+          mkdir -p "${FINAL_DIR}"
+
+          cp \
+            "$KO" \
+            "${FINAL_DIR}/88XXau.ko"
+
+          echo
+          echo "================================================"
+          echo "modinfo"
+          echo "================================================"
+
+          modinfo \
+            "${FINAL_DIR}/88XXau.ko" \
+            | head -n 20 || true
+
+
+      # ============================================================
+      # Refresh / verify module list
+      # ============================================================
+
+      - name: Refresh modules list
+        working-directory: kernel-build
+
+        run: |
+          set -e
+
+          MOD_ENTRY='drivers/net/wireless/rtl8812au/88XXau.ko'
+          MODULE_LIST='common/android/gki_aarch64_modules'
+
+          echo "================================================"
+          echo "Final GKI module list verification"
+          echo "================================================"
+
+          mkdir -p common/android
+
           if [ -f "out/common/modules.order" ]; then
-            mkdir -p common/android
 
             cp -f \
               "out/common/modules.order" \
               "common/android/gki_aarch64_modules"
 
-            MOD_ENTRY='drivers/net/wireless/rtl8812au/88XXau.ko'
+            echo "Copied generated modules.order"
 
-            if ! grep -qxF \
-              "$MOD_ENTRY" \
-              common/android/gki_aarch64_modules
-            then
-              printf '%s\n' "$MOD_ENTRY" \
-                >> common/android/gki_aarch64_modules
-            fi
+          elif [ ! -f "$MODULE_LIST" ]; then
 
-            echo "RTL8812AU module registered:"
-            grep -nF \
-              "$MOD_ENTRY" \
-              common/android/gki_aarch64_modules || true
+            touch "$MODULE_LIST"
 
-            # IMPORTANT:
-            # Do not add filp_open/kernel_read/kernel_write here.
-            # They are forbidden ABI symbols, not kernel module entries.
+          fi
 
-            python3 - <<'PY'
+
+          if ! grep -qxF \
+            "$MOD_ENTRY" \
+            "$MODULE_LIST"
+          then
+            printf '%s\n' "$MOD_ENTRY" \
+              >> "$MODULE_LIST"
+          fi
+
+
+          echo
+          echo "--- RTL8812AU module registration ---"
+
+          grep -nF \
+            "$MOD_ENTRY" \
+            "$MODULE_LIST" || true
+
+
+          echo
+          echo "--- Checking incorrect ABI entries ---"
+
+          if grep -nE \
+            '^(filp_open|kernel_read|kernel_write)$' \
+            "$MODULE_LIST"
+          then
+            echo
+            echo "ERROR: forbidden symbols found in module list"
+            exit 1
+          fi
+
+          echo
+          echo "OK: module list is clean"
+
+
+          python3 - <<'PY'
           from pathlib import Path
 
           p = Path(
@@ -733,43 +1073,54 @@ jobs:
           else:
               raise SystemExit(
                   'ERROR: common/android/gki_aarch64_modules '
-                  'missing after copy'
+                  'missing after final verification'
               )
           PY
 
-          else
-            echo "ERROR: out/common/modules.order not found"
-            exit 1
-          fi
+
+      # ============================================================
+      # Collect 88XXau.ko
+      # ============================================================
 
       - name: Collect 88XXau.ko
         working-directory: kernel-build
+
         run: |
           set -e
 
-          KO=$(find out -name '88XXau.ko' | head -n1)
+          KO="${FINAL_DIR}/88XXau.ko"
 
-          if [ -z "$KO" ]; then
-            echo "ERROR: 88XXau.ko was not built"
+          if [ ! -f "$KO" ]; then
+            echo "ERROR: final 88XXau.ko not found"
             exit 1
           fi
 
-          cp \
-            "$KO" \
-            "${FINAL_DIR}/88XXau.ko"
+          echo "Found:"
+          ls -lh "$KO"
 
-          modinfo \
-            "${FINAL_DIR}/88XXau.ko" \
-            | head -n 12
+          echo
+          echo "Module information:"
+          modinfo "$KO" | head -n 20 || true
+
+
+      # ============================================================
+      # Package kernels with AnyKernel3
+      # ============================================================
 
       - name: Package Kernels with AnyKernel3
         working-directory: kernel-build
+
         run: |
           set -e
 
           for config in ${BUILD_CONFIGS}; do
 
             if [ -f "${FINAL_DIR}/${IMAGE_TYPE}-${config}" ]; then
+
+              echo
+              echo "========================================"
+              echo "Packaging ${config}"
+              echo "========================================"
 
               cp -r \
                 "${AK3_DIR}" \
@@ -787,16 +1138,25 @@ jobs:
                 -x .git README.md '*placeholder'
 
               cd ..
+
             fi
 
           done
 
+
+      # ============================================================
+      # Upload artifacts
+      # ============================================================
+
       - name: Upload Kernel Packages
         uses: actions/upload-artifact@v4
+
         with:
           name: kernel-packages
+
           path: |
             kernel-build/final_images/*.zip
             kernel-build/final_images/*.ko
+
           if-no-files-found: error
           retention-days: 30
