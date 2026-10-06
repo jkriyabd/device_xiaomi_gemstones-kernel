@@ -1,4 +1,4 @@
-name: Build Android Common Kernel
+name: Build Android Common Kernel GPT
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
