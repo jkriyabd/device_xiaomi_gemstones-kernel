@@ -83,7 +83,7 @@ jobs:
     steps:
 
       # ============================================================
-      # Validate inputs
+      # Validate workflow inputs
       # ============================================================
 
       - name: Validate inputs
@@ -131,7 +131,7 @@ jobs:
 
 
       # ============================================================
-      # Setup workspace + manifest
+      # Setup local manifest
       # ============================================================
 
       - name: Setup build workspace and a local manifest
@@ -157,12 +157,9 @@ jobs:
 
           mecho '<?xml version="1.0" encoding="UTF-8"?>'
           mecho '<manifest>'
-
           mecho "  <remote name=\"common-repo\" fetch=\"https://${REPO_SOURCE}/${REPO_OWNER}\" />"
           mecho ''
-
           mecho '  <remove-project name="kernel/common" />'
-
           mecho "  <project path=\"common\" name=\"${REPO_NAME}\" remote=\"common-repo\" revision=\"${COMMON_REPO_BRANCH}\" >"
           mecho '    <linkfile src="." dest=".source_date_epoch_dir" />'
           mecho '  </project>'
@@ -176,7 +173,7 @@ jobs:
 
 
       # ============================================================
-      # Download build utilities
+      # Download repo + clone AnyKernel3
       # ============================================================
 
       - name: Download build utilities
@@ -208,7 +205,7 @@ jobs:
 
 
       # ============================================================
-      # Cleanup runner
+      # Free runner disk space
       # ============================================================
 
       - name: Clean up container
@@ -270,11 +267,11 @@ jobs:
         run: |
           set -e
 
-          DRV=common/drivers/net/wireless/rtl8812au
+          DRV="common/drivers/net/wireless/rtl8812au"
 
-          echo "================================================"
+          echo "========================================"
           echo "Cloning RTL8812AU v5.6.4.2"
-          echo "================================================"
+          echo "========================================"
 
           rm -rf "$DRV"
 
@@ -285,6 +282,7 @@ jobs:
             "$DRV"
 
           rm -rf "$DRV/.git"
+
 
           # --------------------------------------------------------
           # Driver Makefile
@@ -305,12 +303,16 @@ jobs:
           echo 'EXTRA_CFLAGS += -Wno-error' >> "$DRV/Makefile"
 
           echo "--- RTL8812AU Makefile ---"
+
           grep -nE \
             'CONFIG_PLATFORM_I386_PC|obj-\$\(CONFIG_88XXAU\)|EXTRA_CFLAGS' \
             "$DRV/Makefile" || true
 
-          if ! grep -q 'obj-$(CONFIG_88XXAU)' "$DRV/Makefile"; then
-            echo "ERROR: RTL8812AU Makefile was not patched correctly"
+          if ! grep -q \
+            'obj-$(CONFIG_88XXAU)' \
+            "$DRV/Makefile"
+          then
+            echo "ERROR: driver Makefile obj line not patched"
             grep -n 'obj-' "$DRV/Makefile" || true
             exit 1
           fi
@@ -365,7 +367,8 @@ jobs:
               print(f"No stale auth block found in {p}")
           PY
 
-          grep -n 'auth_len\|pauth_frame' \
+          grep -n \
+            'auth_len\|pauth_frame' \
             "$DRV/core/rtw_ap.c" || true
 
 
@@ -412,6 +415,7 @@ jobs:
           # --------------------------------------------------------
 
           if [ -f "$DRV/include/rtw_mlme_ext.h" ]; then
+
             sed -i \
               '/^#ifndef NL80211_AUTHTYPE_SAE/,/^#endif/d' \
               "$DRV/include/rtw_mlme_ext.h"
@@ -419,9 +423,11 @@ jobs:
             grep -n \
               'NL80211_AUTHTYPE_SAE' \
               "$DRV/include/rtw_mlme_ext.h" || true
+
           fi
 
           if [ -f "$DRV/core/rtw_ap.c" ]; then
+
             grep -RIn \
               'NL80211_AUTHTYPE_SAE' \
               "$DRV" || true
@@ -434,11 +440,12 @@ jobs:
                 's/NL80211_AUTHTYPE_SAE/0/g' \
                 "$f"
             done
+
           fi
 
 
           # --------------------------------------------------------
-          # Kernel configuration
+          # Kernel config
           # --------------------------------------------------------
 
           FILES=$(
@@ -455,6 +462,7 @@ jobs:
           }
 
           for CFG in $FILES; do
+
             echo "Patching config: $CFG"
 
             sed -i \
@@ -471,13 +479,14 @@ jobs:
 
             printf '\nCONFIG_88XXAU=m\nCONFIG_CFG80211=y\nCONFIG_SECTION_MISMATCH_WARN_ONLY=y\n' \
               >> "$CFG"
+
           done
 
 
           echo
-          echo "================================================"
+          echo "========================================"
           echo "RTL8812AU configuration"
-          echo "================================================"
+          echo "========================================"
 
           grep -rn \
             "88XXAU" \
@@ -491,10 +500,11 @@ jobs:
 
 
       # ============================================================
-      # IMPORTANT:
-      # Disable only the legacy direct filesystem helpers.
+      # Disable legacy direct filesystem APIs
       #
-      # Upstream v5.6.4.2 has this structure:
+      # IMPORTANT:
+      #
+      # RTL8812AU v5.6.4.2 contains:
       #
       #   openFile()
       #   closeFile()
@@ -504,12 +514,16 @@ jobs:
       #   retriveFromFile()
       #   storeToFile()
       #
-      # These use:
+      # The original implementations reference:
+      #
       #   filp_open()
       #   kernel_read()
       #   kernel_write()
       #
-      # Android GKI rejects those direct driver filesystem APIs.
+      # Android GKI rejects those direct driver filesystem symbols.
+      #
+      # This patch replaces the functions individually instead of
+      # relying on one exact comment marker.
       # ============================================================
 
       - name: Disable RTL8812AU direct file I/O
@@ -518,136 +532,279 @@ jobs:
         run: |
           set -e
 
-          DRV="common/drivers/net/wireless/rtl8812au"
-          FILE="$DRV/os_dep/osdep_service.c"
+          FILE="common/drivers/net/wireless/rtl8812au/os_dep/osdep_service.c"
 
-          echo "================================================"
-          echo "Disabling RTL8812AU direct filesystem I/O"
-          echo "================================================"
+          echo "========================================"
+          echo "Patching RTL8812AU filesystem helpers"
+          echo "========================================"
 
-          if [ ! -f "$FILE" ]; then
-            echo "ERROR: $FILE not found"
-            exit 1
-          fi
+          test -f "$FILE"
+
 
           python3 - "$FILE" <<'PY'
           from pathlib import Path
           import re
           import sys
 
-          p = Path(sys.argv[1])
-          text = p.read_text()
+          path = Path(sys.argv[1])
+          text = path.read_text()
 
-          start_marker = (
-              "#ifdef PLATFORM_LINUX\n"
-              "/*\n"
-              " * Open a file with the specific @param path"
-          )
 
-          start = text.find(start_marker)
+          def replace_function(source, name, replacement):
+              """
+              Replace a C function definition by finding its opening
+              brace and matching braces. This avoids depending on
+              comments or exact whitespace.
+              """
 
-          if start < 0:
-              raise SystemExit(
-                  "ERROR: Could not locate RTL8812AU "
-                  "file-I/O helper start marker"
+              pattern = re.compile(
+                  rf'(?ms)'
+                  rf'^[ \t]*'
+                  rf'(?:static\s+)?'
+                  rf'(?:inline\s+)?'
+                  rf'int\s+{re.escape(name)}\s*\([^;]*\)\s*\{{'
               )
 
-          end_marker = "#endif /* PLATFORM_LINUX */"
+              match = pattern.search(source)
 
-          end = text.find(
-              end_marker,
-              start
-          )
+              if not match:
+                  raise RuntimeError(
+                      f"Function not found: {name}"
+                  )
 
-          if end < 0:
-              raise SystemExit(
-                  "ERROR: Could not locate RTL8812AU "
-                  "file-I/O helper end marker"
+              brace_start = source.find(
+                  '{',
+                  match.start(),
+                  match.end()
               )
 
-          end += len(end_marker)
+              if brace_start < 0:
+                  raise RuntimeError(
+                      f"Opening brace not found: {name}"
+                  )
 
-          replacement = r'''#ifdef PLATFORM_LINUX
+              depth = 0
+              i = brace_start
 
-/*
- * Android GKI does not allow kernel drivers to perform
- * direct filesystem access.
- *
- * The original rtl8812au implementation used:
- *
- *   filp_open()
- *   kernel_read()
- *   kernel_write()
- *
- * Those legacy helpers are intentionally disabled for
- * Android GKI builds.
- */
+              in_string = False
+              in_char = False
+              in_line_comment = False
+              in_block_comment = False
+              escaped = False
 
-static int isFileReadable(const char *path, u32 *sz)
-{
-	(void)path;
+              while i < len(source):
 
-	if (sz)
-		*sz = 0;
+                  c = source[i]
+                  n = source[i + 1] if i + 1 < len(source) else ''
 
-	return -ENOENT;
-}
+                  if in_line_comment:
+                      if c == '\n':
+                          in_line_comment = False
+                      i += 1
+                      continue
 
-static int retriveFromFile(const char *path, u8 *buf, u32 sz)
-{
-	(void)path;
-	(void)buf;
-	(void)sz;
+                  if in_block_comment:
+                      if c == '*' and n == '/':
+                          in_block_comment = False
+                          i += 2
+                          continue
+                      i += 1
+                      continue
 
-	return -ENOENT;
-}
+                  if in_string:
+                      if escaped:
+                          escaped = False
+                      elif c == '\\':
+                          escaped = True
+                      elif c == '"':
+                          in_string = False
+                      i += 1
+                      continue
 
-static int storeToFile(const char *path, u8 *buf, u32 sz)
-{
-	(void)path;
-	(void)buf;
-	(void)sz;
+                  if in_char:
+                      if escaped:
+                          escaped = False
+                      elif c == '\\':
+                          escaped = True
+                      elif c == "'":
+                          in_char = False
+                      i += 1
+                      continue
 
-	return -ENOENT;
-}
+                  if c == '/' and n == '/':
+                      in_line_comment = True
+                      i += 2
+                      continue
 
-#endif /* PLATFORM_LINUX */'''
+                  if c == '/' and n == '*':
+                      in_block_comment = True
+                      i += 2
+                      continue
 
-          text = (
-              text[:start]
-              + replacement
-              + text[end:]
+                  if c == '"':
+                      in_string = True
+                      i += 1
+                      continue
+
+                  if c == "'":
+                      in_char = True
+                      i += 1
+                      continue
+
+                  if c == '{':
+                      depth += 1
+
+                  elif c == '}':
+                      depth -= 1
+
+                      if depth == 0:
+                          end = i + 1
+
+                          return (
+                              source[:match.start()]
+                              + replacement
+                              + source[end:]
+                          )
+
+                  i += 1
+
+              raise RuntimeError(
+                  f"Unbalanced braces while replacing: {name}"
+              )
+
+
+          replacements = {
+
+              "openFile": """static int openFile(
+          	struct file **fpp,
+          	const char *path,
+          	int flag,
+          	int mode
           )
+          {
+          	(void)fpp;
+          	(void)path;
+          	(void)flag;
+          	(void)mode;
 
-          p.write_text(text)
+          	return -EOPNOTSUPP;
+          }""",
 
+              "closeFile": """static int closeFile(struct file *fp)
+          {
+          	(void)fp;
+          	return 0;
+          }""",
+
+              "readFile": """static int readFile(
+          	struct file *fp,
+          	char *buf,
+          	int len
+          )
+          {
+          	(void)fp;
+          	(void)buf;
+          	(void)len;
+
+          	return -EOPNOTSUPP;
+          }""",
+
+              "writeFile": """static int writeFile(
+          	struct file *fp,
+          	char *buf,
+          	int len
+          )
+          {
+          	(void)fp;
+          	(void)buf;
+          	(void)len;
+
+          	return -EOPNOTSUPP;
+          }""",
+
+              "isFileReadable": """static int isFileReadable(
+          	const char *path,
+          	u32 *sz
+          )
+          {
+          	(void)path;
+
+          	if (sz)
+          		*sz = 0;
+
+          	return -EOPNOTSUPP;
+          }""",
+
+              "retriveFromFile": """static int retriveFromFile(
+          	const char *path,
+          	u8 *buf,
+          	u32 sz
+          )
+          {
+          	(void)path;
+          	(void)buf;
+          	(void)sz;
+
+          	return -EOPNOTSUPP;
+          }""",
+
+              "storeToFile": """static int storeToFile(
+          	const char *path,
+          	u8 *buf,
+          	u32 sz
+          )
+          {
+          	(void)path;
+          	(void)buf;
+          	(void)sz;
+
+          	return -EOPNOTSUPP;
+          }""",
+          }
+
+
+          for name, replacement in replacements.items():
+
+              text = replace_function(
+                  text,
+                  name,
+                  replacement
+              )
+
+              print(
+                  f"Patched function: {name}"
+              )
+
+
+          path.write_text(text)
+
+          print()
           print(
-              "Successfully replaced the RTL8812AU "
-              "direct file-I/O helper implementation"
+              "RTL8812AU filesystem helper functions "
+              "successfully replaced."
           )
           PY
 
 
           echo
-          echo "================================================"
-          echo "Checking forbidden file-I/O calls"
-          echo "================================================"
+          echo "========================================"
+          echo "Forbidden symbol check"
+          echo "========================================"
 
           if grep -RInE \
             '\b(filp_open|kernel_read|kernel_write)\s*\(' \
-            "$DRV"
+            common/drivers/net/wireless/rtl8812au
           then
             echo
-            echo "ERROR: Forbidden GKI file-I/O API reference remains"
-            echo
+            echo "ERROR: forbidden GKI file-I/O call remains"
             exit 1
           fi
 
-          echo "OK: No filp_open/kernel_read/kernel_write calls remain"
+          echo "OK: no forbidden direct file-I/O calls remain"
 
 
       # ============================================================
-      # Verify the whole RTL8812AU source tree
+      # Verify entire RTL8812AU tree
       # ============================================================
 
       - name: Verify RTL8812AU forbidden symbols
@@ -658,33 +815,32 @@ static int storeToFile(const char *path, u8 *buf, u32 sz)
 
           DRV="common/drivers/net/wireless/rtl8812au"
 
-          echo "================================================"
-          echo "RTL8812AU forbidden symbol verification"
-          echo "================================================"
-
-          FORBIDDEN='filp_open|kernel_read|kernel_write'
+          echo "========================================"
+          echo "RTL8812AU source verification"
+          echo "========================================"
 
           if grep -RInE \
-            "\b(${FORBIDDEN})\s*\(" \
+            '\b(filp_open|kernel_read|kernel_write)\s*\(' \
             "$DRV"
           then
             echo
-            echo "ERROR: Forbidden GKI file-I/O reference found"
+            echo "ERROR: forbidden GKI filesystem API found"
             exit 1
           fi
 
-          echo "OK: RTL8812AU source has no forbidden file-I/O calls"
+          echo "OK: source tree is free of forbidden calls"
 
 
       # ============================================================
-      # KMI / ABI symbol list
+      # KMI ABI symbol list
       #
       # DO NOT add:
+      #
       #   filp_open
       #   kernel_read
       #   kernel_write
       #
-      # They are forbidden by Android GKI.
+      # They are explicitly rejected by GKI.
       # ============================================================
 
       - name: Fix RTL8812AU KMI symbol list
@@ -701,122 +857,46 @@ static int storeToFile(const char *path, u8 *buf, u32 sz)
             exit 1
           fi
 
-          echo "Using KMI symbol list:"
-          echo "$SYMBOL_LIST"
-
-
-          # --------------------------------------------------------
-          # Only the radiotap symbol required by this driver.
-          # --------------------------------------------------------
-
           REQUIRED_SYMBOLS="
           ieee80211_radiotap_iterator_init
           "
 
           for symbol in $REQUIRED_SYMBOLS; do
-            if grep -qxF "$symbol" "$SYMBOL_LIST"; then
+
+            if grep -qxF \
+              "$symbol" \
+              "$SYMBOL_LIST"
+            then
               echo "Already present: $symbol"
             else
-              printf '%s\n' "$symbol" >> "$SYMBOL_LIST"
+              printf '%s\n' "$symbol" \
+                >> "$SYMBOL_LIST"
+
               echo "Added KMI symbol: $symbol"
             fi
+
           done
 
 
-          # --------------------------------------------------------
-          # Make absolutely sure forbidden symbols are NOT added.
-          # --------------------------------------------------------
-
           echo
-          echo "--- RTL8812AU KMI symbols ---"
-
-          grep -nE \
-            '^(ieee80211_radiotap_iterator_init)$' \
-            "$SYMBOL_LIST" || true
-
-          echo
-          echo "--- Checking forbidden symbols ---"
+          echo "========================================"
+          echo "Checking forbidden KMI symbols"
+          echo "========================================"
 
           if grep -nE \
             '^(filp_open|kernel_read|kernel_write)$' \
             "$SYMBOL_LIST"
           then
             echo
-            echo "ERROR: forbidden file-I/O symbol exists in KMI list"
+            echo "ERROR: forbidden symbol exists in KMI list"
             exit 1
           fi
 
-          echo "OK: forbidden file-I/O symbols are absent"
-
-          echo
-          echo "--- End KMI symbol list check ---"
+          echo "OK: forbidden symbols are absent"
 
 
       # ============================================================
-      # Register RTL8812AU module BEFORE the kernel build.
-      #
-      # This is important because doing it only AFTER the build
-      # cannot help a GKI module/ABI validation performed during
-      # the build.
-      # ============================================================
-
-      - name: Register RTL8812AU module before build
-        working-directory: kernel-build
-
-        run: |
-          set -e
-
-          MODULE_LIST="common/android/gki_aarch64_modules"
-          MOD_ENTRY="drivers/net/wireless/rtl8812au/88XXau.ko"
-
-          echo "================================================"
-          echo "Registering RTL8812AU in GKI module list"
-          echo "================================================"
-
-          if [ ! -f "$MODULE_LIST" ]; then
-            echo "WARNING: $MODULE_LIST does not exist yet."
-            echo "Creating it."
-
-            mkdir -p "$(dirname "$MODULE_LIST")"
-            touch "$MODULE_LIST"
-          fi
-
-          if grep -qxF "$MOD_ENTRY" "$MODULE_LIST"; then
-            echo "Already registered:"
-            echo "$MOD_ENTRY"
-          else
-            printf '%s\n' "$MOD_ENTRY" >> "$MODULE_LIST"
-            echo "Added:"
-            echo "$MOD_ENTRY"
-          fi
-
-          echo
-          echo "--- RTL8812AU module entry ---"
-
-          grep -nF \
-            "$MOD_ENTRY" \
-            "$MODULE_LIST" || true
-
-
-          # --------------------------------------------------------
-          # Never add ABI symbols here.
-          # --------------------------------------------------------
-
-          if grep -nE \
-            '^(filp_open|kernel_read|kernel_write)$' \
-            "$MODULE_LIST"
-          then
-            echo
-            echo "ERROR: ABI symbols were incorrectly added to module list"
-            exit 1
-          fi
-
-          echo
-          echo "OK: module list contains module entry only"
-
-
-      # ============================================================
-      # Final source sanity check before compiling
+      # Final pre-build sanity check
       # ============================================================
 
       - name: Final RTL8812AU pre-build check
@@ -827,43 +907,36 @@ static int storeToFile(const char *path, u8 *buf, u32 sz)
 
           DRV="common/drivers/net/wireless/rtl8812au"
 
-          echo "================================================"
+          echo "========================================"
           echo "Final RTL8812AU pre-build check"
-          echo "================================================"
+          echo "========================================"
 
           test -f "$DRV/Makefile"
           test -f "$DRV/Kconfig"
           test -f "$DRV/os_dep/osdep_service.c"
 
-          if ! grep -q \
+          grep -q \
             'obj-$(CONFIG_88XXAU)' \
             "$DRV/Makefile"
-          then
-            echo "ERROR: CONFIG_88XXAU Makefile entry missing"
-            exit 1
-          fi
 
-          if ! grep -q \
+          grep -q \
             'config 88XXAU' \
             "$DRV/Kconfig"
-          then
-            echo "ERROR: 88XXAU Kconfig entry missing"
-            exit 1
-          fi
 
           if grep -RInE \
             '\b(filp_open|kernel_read|kernel_write)\s*\(' \
             "$DRV"
           then
-            echo "ERROR: forbidden file-I/O call remains"
+            echo "ERROR: forbidden API remains"
             exit 1
           fi
 
-          echo "OK: RTL8812AU is ready for GKI build"
+          echo
+          echo "RTL8812AU is ready for kernel build."
 
 
       # ============================================================
-      # Build kernel
+      # Build kernel(s)
       # ============================================================
 
       - name: Build, and process the kernel(s)
@@ -891,17 +964,23 @@ static int storeToFile(const char *path, u8 *buf, u32 sz)
             if [ "${USE_KLEAF}" = true ]; then
 
               if [ "${FAST_BUILD}" = true ]; then
+
                 tools/bazel build \
                   ${EXTRA_ARGS} \
                   --config=fast \
                   "//common:${config}"
+
               else
+
                 tools/bazel build \
                   ${EXTRA_ARGS} \
                   "//common:${config}"
+
               fi
 
-              if [ -f "${OUT_BAZEL_DIR}/${config}/${IMAGE_TYPE}" ]; then
+              if [ -f \
+                "${OUT_BAZEL_DIR}/${config}/${IMAGE_TYPE}"
+              ]; then
 
                 sudo chmod 777 -R \
                   "${OUT_BAZEL_DIR}/${config}"
@@ -922,7 +1001,9 @@ static int storeToFile(const char *path, u8 *buf, u32 sz)
               BUILD_CONFIG="common/${config}" \
                 bash build/build.sh ${EXTRA_ARGS}
 
-              if [ -f "${OUT_DIR}/dist/${IMAGE_TYPE}" ]; then
+              if [ -f \
+                "${OUT_DIR}/dist/${IMAGE_TYPE}"
+              ]; then
 
                 mv \
                   "${OUT_DIR}/dist/${IMAGE_TYPE}" \
@@ -941,7 +1022,7 @@ static int storeToFile(const char *path, u8 *buf, u32 sz)
 
 
       # ============================================================
-      # Verify generated module
+      # Verify RTL8812AU .ko
       # ============================================================
 
       - name: Verify generated RTL8812AU module
@@ -950,23 +1031,35 @@ static int storeToFile(const char *path, u8 *buf, u32 sz)
         run: |
           set -e
 
-          echo "================================================"
+          echo "========================================"
           echo "Searching for 88XXau.ko"
-          echo "================================================"
+          echo "========================================"
 
-          KO=$(find out -type f -name '88XXau.ko' | head -n1)
+          KO=$(find out \
+            -type f \
+            -name '88XXau.ko' \
+            | head -n1)
 
           if [ -z "$KO" ]; then
+
             echo "ERROR: 88XXau.ko was not built"
+
             echo
-            echo "Searching for any RTL8812AU module:"
-            find out -type f \
-              \( -name '*88XXau*.ko' -o -name '*8812au*.ko' \) \
+            echo "Searching for RTL8812AU modules:"
+
+            find out \
+              -type f \
+              \( \
+                -name '*88XXau*.ko' \
+                -o \
+                -name '*8812au*.ko' \
+              \) \
               -print || true
+
             exit 1
           fi
 
-          echo "RTL8812AU module:"
+          echo "Found:"
           echo "$KO"
 
           mkdir -p "${FINAL_DIR}"
@@ -976,9 +1069,9 @@ static int storeToFile(const char *path, u8 *buf, u32 sz)
             "${FINAL_DIR}/88XXau.ko"
 
           echo
-          echo "================================================"
-          echo "modinfo"
-          echo "================================================"
+          echo "========================================"
+          echo "RTL8812AU module info"
+          echo "========================================"
 
           modinfo \
             "${FINAL_DIR}/88XXau.ko" \
@@ -986,102 +1079,19 @@ static int storeToFile(const char *path, u8 *buf, u32 sz)
 
 
       # ============================================================
-      # Refresh / verify module list
+      # Package RTL8812AU into AnyKernel3
+      #
+      # AnyKernel3 do.modules=1 installs .ko files from modules/
+      # to the corresponding filesystem location.
+      #
+      # vendor/lib/modules/88XXau.ko
+      # ->
+      # /vendor/lib/modules/88XXau.ko
+      #
+      # The .ko is ALSO uploaded separately as an artifact.
       # ============================================================
 
-      - name: Refresh modules list
-        working-directory: kernel-build
-
-        run: |
-          set -e
-
-          MOD_ENTRY='drivers/net/wireless/rtl8812au/88XXau.ko'
-          MODULE_LIST='common/android/gki_aarch64_modules'
-
-          echo "================================================"
-          echo "Final GKI module list verification"
-          echo "================================================"
-
-          mkdir -p common/android
-
-          if [ -f "out/common/modules.order" ]; then
-
-            cp -f \
-              "out/common/modules.order" \
-              "common/android/gki_aarch64_modules"
-
-            echo "Copied generated modules.order"
-
-          elif [ ! -f "$MODULE_LIST" ]; then
-
-            touch "$MODULE_LIST"
-
-          fi
-
-
-          if ! grep -qxF \
-            "$MOD_ENTRY" \
-            "$MODULE_LIST"
-          then
-            printf '%s\n' "$MOD_ENTRY" \
-              >> "$MODULE_LIST"
-          fi
-
-
-          echo
-          echo "--- RTL8812AU module registration ---"
-
-          grep -nF \
-            "$MOD_ENTRY" \
-            "$MODULE_LIST" || true
-
-
-          echo
-          echo "--- Checking incorrect ABI entries ---"
-
-          if grep -nE \
-            '^(filp_open|kernel_read|kernel_write)$' \
-            "$MODULE_LIST"
-          then
-            echo
-            echo "ERROR: forbidden symbols found in module list"
-            exit 1
-          fi
-
-          echo
-          echo "OK: module list is clean"
-
-
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path(
-              'common/android/gki_aarch64_modules'
-          )
-
-          if p.exists():
-              text = p.read_text()
-
-              if not text.endswith('\n'):
-                  p.write_text(text + '\n')
-
-              print(
-                  'Ensured trailing newline in '
-                  'gki_aarch64_modules'
-              )
-          else:
-              raise SystemExit(
-                  'ERROR: common/android/gki_aarch64_modules '
-                  'missing after final verification'
-              )
-          PY
-
-
-      # ============================================================
-      # Collect 88XXau.ko
-      # ============================================================
-
-      - name: Collect 88XXau.ko
+      - name: Package RTL8812AU module into AnyKernel3
         working-directory: kernel-build
 
         run: |
@@ -1090,16 +1100,63 @@ static int storeToFile(const char *path, u8 *buf, u32 sz)
           KO="${FINAL_DIR}/88XXau.ko"
 
           if [ ! -f "$KO" ]; then
-            echo "ERROR: final 88XXau.ko not found"
+            echo "ERROR: 88XXau.ko not found"
             exit 1
           fi
 
-          echo "Found:"
-          ls -lh "$KO"
+          echo "========================================"
+          echo "Preparing AnyKernel3 RTL8812AU module"
+          echo "========================================"
+
+          mkdir -p \
+            "${AK3_DIR}/modules/vendor/lib/modules"
+
+          cp \
+            "$KO" \
+            "${AK3_DIR}/modules/vendor/lib/modules/88XXau.ko"
+
+          chmod 644 \
+            "${AK3_DIR}/modules/vendor/lib/modules/88XXau.ko"
+
+
+          # Enable AnyKernel3 module installation.
+          if grep -q \
+            '^do.modules=' \
+            "${AK3_DIR}/anykernel.sh"
+          then
+
+            sed -i \
+              's/^do.modules=.*/do.modules=1/' \
+              "${AK3_DIR}/anykernel.sh"
+
+          else
+
+            echo
+            echo "WARNING: do.modules property not found."
+            echo "Adding it to AnyKernel3 properties."
+
+            sed -i \
+              '/^properties()/,/^'\''; }/ {
+                /^'\''; }/i\
+do.modules=1
+              }' \
+              "${AK3_DIR}/anykernel.sh"
+
+          fi
+
 
           echo
-          echo "Module information:"
-          modinfo "$KO" | head -n 20 || true
+          echo "--- AnyKernel3 module setting ---"
+
+          grep -n \
+            'do.modules' \
+            "${AK3_DIR}/anykernel.sh" || true
+
+          echo
+          echo "--- Packaged module ---"
+
+          ls -lh \
+            "${AK3_DIR}/modules/vendor/lib/modules/88XXau.ko"
 
 
       # ============================================================
@@ -1114,33 +1171,115 @@ static int storeToFile(const char *path, u8 *buf, u32 sz)
 
           for config in ${BUILD_CONFIGS}; do
 
-            if [ -f "${FINAL_DIR}/${IMAGE_TYPE}-${config}" ]; then
+            if [ -f \
+              "${FINAL_DIR}/${IMAGE_TYPE}-${config}"
+            ]; then
 
               echo
               echo "========================================"
               echo "Packaging ${config}"
               echo "========================================"
 
+              AK3_PACKAGE="${AK3_DIR}-${config}"
+
+              rm -rf \
+                "$AK3_PACKAGE"
+
               cp -r \
                 "${AK3_DIR}" \
-                "${AK3_DIR}-${config}"
-
-              cd "${AK3_DIR}-${config}"
+                "$AK3_PACKAGE"
 
               cp \
                 "${FINAL_DIR}/${IMAGE_TYPE}-${config}" \
-                "${AK3_DIR}-${config}/${IMAGE_TYPE}"
+                "${AK3_PACKAGE}/${IMAGE_TYPE}"
+
+
+              # ----------------------------------------------------
+              # Verify RTL8812AU module is inside the ZIP source.
+              # ----------------------------------------------------
+
+              if [ ! -f \
+                "${AK3_PACKAGE}/modules/vendor/lib/modules/88XXau.ko"
+              ]; then
+
+                echo "ERROR: 88XXau.ko missing from AnyKernel3 package"
+                exit 1
+
+              fi
+
+
+              echo
+              echo "--- AnyKernel3 package contents ---"
+
+              ls -lh \
+                "${AK3_PACKAGE}/modules/vendor/lib/modules/88XXau.ko"
+
+
+              cd "$AK3_PACKAGE"
 
               zip -r9 \
                 "${FINAL_DIR}/${config}.zip" \
                 * \
-                -x .git README.md '*placeholder'
+                -x \
+                .git \
+                README.md \
+                '*placeholder'
 
               cd ..
 
             fi
 
           done
+
+
+      # ============================================================
+      # Final artifact verification
+      # ============================================================
+
+      - name: Final artifact verification
+        working-directory: kernel-build
+
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "Final artifacts"
+          echo "========================================"
+
+          ls -lh \
+            "${FINAL_DIR}"
+
+
+          test -f \
+            "${FINAL_DIR}/88XXau.ko"
+
+
+          if ! find \
+            "${FINAL_DIR}" \
+            -maxdepth 1 \
+            -name '*.zip' \
+            -type f \
+            | grep -q .
+          then
+            echo "ERROR: no kernel ZIP produced"
+            exit 1
+          fi
+
+
+          echo
+          echo "========================================"
+          echo "Final RTL8812AU module"
+          echo "========================================"
+
+          modinfo \
+            "${FINAL_DIR}/88XXau.ko" \
+            | head -n 20 || true
+
+
+          echo
+          echo "========================================"
+          echo "Done"
+          echo "========================================"
 
 
       # ============================================================
