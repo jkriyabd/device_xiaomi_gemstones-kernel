@@ -317,40 +317,38 @@ jobs:
       - name: Refresh modules list
         working-directory: kernel-build
         run: |
-    set -e
-    if [ -f "out/common/modules.order" ]; then
-      mkdir -p common/android
-      cp -f "out/common/modules.order" "common/android/gki_aarch64_modules"
+          set -e
+          if [ -f "out/common/modules.order" ]; then
+            mkdir -p common/android
+            cp -f "out/common/modules.order" "common/android/gki_aarch64_modules"
 
-      MOD_ENTRY='drivers/net/wireless/rtl8812au/88XXau.ko'
-      if ! grep -qxF "$MOD_ENTRY" common/android/gki_aarch64_modules; then
-        printf '%s\n' "$MOD_ENTRY" >> common/android/gki_aarch64_modules
-      fi
-
-      # Add missing kernel symbols to the system DLKM list
-      if [ -f "common/android/gki_system_dlkm_modules" ]; then
-        for symbol in filp_open ieee80211_radiotap_iterator_init kernel_read kernel_write; do
-          if ! grep -qxF "$symbol" common/android/gki_system_dlkm_modules; then
-            printf '%s\n' "$symbol" >> common/android/gki_system_dlkm_modules
+            MOD_ENTRY='drivers/net/wireless/rtl8812au/88XXau.ko'
+            if ! grep -qxF "$MOD_ENTRY" common/android/gki_aarch64_modules; then
+              printf '%s\n' "$MOD_ENTRY" >> common/android/gki_aarch64_modules
+            fi
+            # Add missing kernel symbols to the system DLKM list
+            if [ -f "common/android/gki_system_dlkm_modules" ]; then
+              for symbol in filp_open ieee80211_radiotap_iterator_init kernel_read kernel_write; do
+                if ! grep -qxF "$symbol" common/android/gki_system_dlkm_modules; then
+                  printf '%s\n' "$symbol" >> common/android/gki_system_dlkm_modules
+                fi
+              done
+            fi
+            python3 - <<'PY'
+          from pathlib import Path
+          p = Path('common/android/gki_aarch64_modules')
+          if p.exists():
+            text = p.read_text()
+            if not text.endswith('\n'):
+              p.write_text(text + '\n')
+            print('Ensured trailing newline in gki_aarch64_modules')
+          else:
+            raise SystemExit('ERROR: common/android/gki_aarch64_modules missing after copy')
+          PY
+          else
+            echo "ERROR: out/common/modules.order not found"
+            exit 1
           fi
-        done
-      fi
-
-      python3 - <<'PY'
-      from pathlib import Path
-      p = Path('common/android/gki_aarch64_modules')
-      if p.exists():
-        text = p.read_text()
-        if not text.endswith('\n'):
-          p.write_text(text + '\n')
-        print('Ensured trailing newline in gki_aarch64_modules')
-      else:
-        raise SystemExit('ERROR: common/android/gki_aarch64_modules missing after copy')
-      PY
-    else
-      echo "ERROR: out/common/modules.order not found"
-      exit 1
-    fi
 
       - name: Collect 88XXau.ko
         working-directory: kernel-build
