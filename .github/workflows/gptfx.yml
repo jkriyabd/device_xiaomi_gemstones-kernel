@@ -1138,7 +1138,7 @@ jobs:
             sed -i \
               '/^properties()/,/^'\''; }/ {
                 /^'\''; }/i\
-do.modules=1
+            do.modules=1
               }' \
               "${AK3_DIR}/anykernel.sh"
 
