@@ -299,6 +299,15 @@ jobs:
             printf '\nCONFIG_88XXAU=m\nCONFIG_CFG80211=y\nCONFIG_SECTION_MISMATCH_WARN_ONLY=y\n' >> "$CFG"
           done
 
+      - name: Add missing symbols
+        run: |
+          cat >> kernel-build/common/android/abi_gki_aarch64_xiaomi << 'EOF'
+
+          # required by rtl8812au (88XXau.ko)
+            ieee80211_radiotap_iterator_init
+            ieee80211_radiotap_iterator_next
+          EOF
+
       - name: Build, and process the kernel(s)
         working-directory: kernel-build
         env:
