@@ -1,3 +1,4 @@
+```yaml
 name: Build Android Common Kernel GPT
 
 concurrency:
@@ -184,7 +185,6 @@ jobs:
             -o ~/.bin/repo
 
           chmod a+rx ~/.bin/repo
-
           echo "${HOME}/.bin" >> "${GITHUB_PATH}"
 
       - name: Clean up container
@@ -223,7 +223,7 @@ jobs:
             https://github.com/SukiSU-Ultra/SukiSU-Ultra.git \
             common/KernelSU-Next
 
-      - name: Add RTL8821AU driver
+      - name: Add RTL8812AU driver
         working-directory: kernel-build
         run: |
           set -e
@@ -249,9 +249,6 @@ jobs:
           sed -i \
             's/-Wno-stringop-overread//g; s/-Wno-stringop-overflow//g; s/-Wno-maybe-uninitialized//g' \
             "$DRV/Makefile"
-
-          echo '--- remaining -W flags in driver Makefile ---'
-          grep -n -- '-W' "$DRV/Makefile" || true
 
           echo 'EXTRA_CFLAGS += -Wno-error' >> "$DRV/Makefile"
 
@@ -300,9 +297,6 @@ jobs:
           else:
               print(f"No stale auth block found in {p}")
           PY
-
-          grep -n 'auth_len\|pauth_frame' \
-            "$DRV/core/rtw_ap.c" || true
 
           python3 - <<'PY'
           from pathlib import Path
@@ -396,6 +390,10 @@ jobs:
             "rtl8812au" \
             common/drivers/net/wireless/Kconfig
 
+      # IMPORTANT:
+      # Only the allowed RTL8812AU ABI symbol is added here.
+      # filp_open, kernel_read and kernel_write are intentionally excluded
+      # because Android GKI ABI checker rejects them for drivers.
       - name: Fix RTL8812AU KMI symbol list
         working-directory: kernel-build
         run: |
@@ -413,10 +411,7 @@ jobs:
           echo "$SYMBOL_LIST"
 
           REQUIRED_SYMBOLS="
-          filp_open
           ieee80211_radiotap_iterator_init
-          kernel_read
-          kernel_write
           "
 
           for symbol in $REQUIRED_SYMBOLS; do
@@ -432,7 +427,7 @@ jobs:
           echo "--- RTL8812AU KMI symbols ---"
 
           grep -nE \
-            '^(filp_open|ieee80211_radiotap_iterator_init|kernel_read|kernel_write|ieee80211_radiotap_iterator_next)$' \
+            '^(ieee80211_radiotap_iterator_init)$' \
             "$SYMBOL_LIST" || true
 
           echo
@@ -446,6 +441,7 @@ jobs:
           USE_KLEAF: ${{ github.event.inputs.use_kleaf }}
           OUT_DIR: ${{ github.workspace }}/kernel-build/out
           OUT_BAZEL_DIR: ${{ github.workspace }}/kernel-build/bazel-bin/common
+
         run: |
           set -e
 
@@ -505,7 +501,6 @@ jobs:
           set -e
 
           if [ -f "out/common/modules.order" ]; then
-
             mkdir -p common/android
 
             cp -f \
@@ -522,25 +517,12 @@ jobs:
                 >> common/android/gki_aarch64_modules
             fi
 
+            # Do NOT add filp_open, kernel_read or kernel_write here.
+            # They are symbols, not module entries, and GKI rejects them.
+
             if [ -f "common/android/gki_system_dlkm_modules" ]; then
-
-              for symbol in \
-                filp_open \
-                ieee80211_radiotap_iterator_init \
-                kernel_read \
-                kernel_write
-              do
-
-                if ! grep -qxF \
-                  "$symbol" \
-                  common/android/gki_system_dlkm_modules
-                then
-                  printf '%s\n' "$symbol" \
-                    >> common/android/gki_system_dlkm_modules
-                fi
-
-              done
-
+              echo "Existing gki_system_dlkm_modules found."
+              echo "No forbidden ABI symbols will be appended."
             fi
 
             python3 - <<'PY'
@@ -628,3 +610,4 @@ jobs:
             kernel-build/final_images/*.ko
           if-no-files-found: error
           retention-days: 30
+```
