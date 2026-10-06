@@ -610,4 +610,3 @@ jobs:
             kernel-build/final_images/*.ko
           if-no-files-found: error
           retention-days: 30
-```
