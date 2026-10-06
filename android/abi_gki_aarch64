@@ -145,5 +145,3 @@
   android_kmalloc_64_create
   contig_page_data
 
-#symbol_list
-  ieee80211_radiotap_iterator_next
