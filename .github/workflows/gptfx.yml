@@ -1,4 +1,3 @@
-```yaml
 name: Build Android Common Kernel GPT
 
 concurrency:
@@ -250,6 +249,9 @@ jobs:
             's/-Wno-stringop-overread//g; s/-Wno-stringop-overflow//g; s/-Wno-maybe-uninitialized//g' \
             "$DRV/Makefile"
 
+          echo '--- remaining -W flags in driver Makefile ---'
+          grep -n -- '-W' "$DRV/Makefile" || true
+
           echo 'EXTRA_CFLAGS += -Wno-error' >> "$DRV/Makefile"
 
           grep -q 'obj-$(CONFIG_88XXAU)' "$DRV/Makefile" || {
@@ -297,6 +299,9 @@ jobs:
           else:
               print(f"No stale auth block found in {p}")
           PY
+
+          grep -n 'auth_len\|pauth_frame' \
+            "$DRV/core/rtw_ap.c" || true
 
           python3 - <<'PY'
           from pathlib import Path
@@ -390,10 +395,179 @@ jobs:
             "rtl8812au" \
             common/drivers/net/wireless/Kconfig
 
-      # IMPORTANT:
-      # Only the allowed RTL8812AU ABI symbol is added here.
-      # filp_open, kernel_read and kernel_write are intentionally excluded
-      # because Android GKI ABI checker rejects them for drivers.
+      # Android GKI denies direct driver file I/O.
+      # rtl8812au v5.6.4.2 contains filp_open/kernel_read/kernel_write
+      # in os_dep/osdep_service.c. Disable those legacy file APIs so
+      # the module does not reference forbidden GKI symbols.
+      - name: Disable RTL8812AU direct file I/O
+        working-directory: kernel-build
+        run: |
+          set -e
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path(
+              "common/drivers/net/wireless/rtl8812au/os_dep/osdep_service.c"
+          )
+
+          text = p.read_text()
+
+          helper_start = text.find(
+              "#ifdef PLATFORM_LINUX\n"
+              "/*\n"
+              " * Open a file with the specific @param path"
+          )
+
+          if helper_start < 0:
+              raise SystemExit(
+                  "ERROR: RTL8812AU file-I/O helper block not found"
+              )
+
+          helper_end_marker = "#endif /* PLATFORM_LINUX */"
+          helper_end = text.find(
+              helper_end_marker,
+              helper_start
+          )
+
+          if helper_end < 0:
+              raise SystemExit(
+                  "ERROR: RTL8812AU file-I/O helper block end not found"
+              )
+
+          helper_end += len(helper_end_marker)
+
+          replacement = """#ifdef PLATFORM_LINUX
+          /*
+           * Android GKI does not allow kernel drivers to perform
+           * direct filesystem access.
+           *
+           * The original rtl8812au implementation used:
+           *   filp_open()
+           *   kernel_read()
+           *   kernel_write()
+           *
+           * Those APIs are intentionally disabled here.
+           */
+          #endif /* PLATFORM_LINUX */"""
+
+          text = (
+              text[:helper_start]
+              + replacement
+              + text[helper_end:]
+          )
+
+          public_start = text.find(
+              "int rtw_is_file_readable(const char *path)"
+          )
+
+          public_end = text.find(
+              "#ifdef PLATFORM_LINUX\nstruct net_device *rtw_alloc_etherdev_with_old_priv",
+              public_start
+          )
+
+          if public_start < 0:
+              raise SystemExit(
+                  "ERROR: RTL8812AU public file API block not found"
+              )
+
+          if public_end < 0:
+              raise SystemExit(
+                  "ERROR: RTL8812AU public file API block end not found"
+              )
+
+          public_replacement = """int rtw_is_file_readable(const char *path)
+          {
+          	(void)path;
+          	return _FALSE;
+          }
+
+          int rtw_is_file_readable_with_size(
+          	const char *path,
+          	u32 *sz
+          )
+          {
+          	(void)path;
+
+          	if (sz)
+          		*sz = 0;
+
+          	return _FALSE;
+          }
+
+          int rtw_retrieve_from_file(
+          	const char *path,
+          	u8 *buf,
+          	u32 sz
+          )
+          {
+          	(void)path;
+          	(void)buf;
+          	(void)sz;
+
+          	return 0;
+          }
+
+          int rtw_store_to_file(
+          	const char *path,
+          	u8 *buf,
+          	u32 sz
+          )
+          {
+          	(void)path;
+          	(void)buf;
+          	(void)sz;
+
+          	return 0;
+          }
+
+          """
+
+          text = (
+              text[:public_start]
+              + public_replacement
+              + text[public_end:]
+          )
+
+          p.write_text(text)
+
+          print(
+              "Disabled RTL8812AU direct filesystem access APIs"
+          )
+          PY
+
+          echo
+          echo "--- Checking forbidden GKI file-I/O references ---"
+
+          if grep -nE \
+            '\b(filp_open|kernel_read|kernel_write)\s*\(' \
+            common/drivers/net/wireless/rtl8812au/os_dep/osdep_service.c
+          then
+            echo "ERROR: forbidden file-I/O API reference remains"
+            exit 1
+          fi
+
+          echo "OK: no filp_open/kernel_read/kernel_write calls remain"
+
+      - name: Verify RTL8812AU forbidden symbols
+        working-directory: kernel-build
+        run: |
+          set -e
+
+          DRV="common/drivers/net/wireless/rtl8812au"
+
+          echo "--- Checking entire RTL8812AU source ---"
+
+          if grep -RInE \
+            '\b(filp_open|kernel_read|kernel_write)\s*\(' \
+            "$DRV"
+          then
+            echo "ERROR: forbidden GKI file-I/O reference found"
+            exit 1
+          fi
+
+          echo "OK: RTL8812AU source has no forbidden file-I/O calls"
+
       - name: Fix RTL8812AU KMI symbol list
         working-directory: kernel-build
         run: |
@@ -429,6 +603,19 @@ jobs:
           grep -nE \
             '^(ieee80211_radiotap_iterator_init)$' \
             "$SYMBOL_LIST" || true
+
+          echo
+          echo "--- Checking forbidden symbols are absent ---"
+
+          if grep -nE \
+            '^(filp_open|kernel_read|kernel_write)$' \
+            "$SYMBOL_LIST"
+          then
+            echo "ERROR: forbidden symbol exists in KMI list"
+            exit 1
+          fi
+
+          echo "OK: forbidden file-I/O symbols are absent"
 
           echo
           echo "--- End KMI symbol list check ---"
@@ -517,18 +704,21 @@ jobs:
                 >> common/android/gki_aarch64_modules
             fi
 
-            # Do NOT add filp_open, kernel_read or kernel_write here.
-            # They are symbols, not module entries, and GKI rejects them.
+            echo "RTL8812AU module registered:"
+            grep -nF \
+              "$MOD_ENTRY" \
+              common/android/gki_aarch64_modules || true
 
-            if [ -f "common/android/gki_system_dlkm_modules" ]; then
-              echo "Existing gki_system_dlkm_modules found."
-              echo "No forbidden ABI symbols will be appended."
-            fi
+            # IMPORTANT:
+            # Do not add filp_open/kernel_read/kernel_write here.
+            # They are forbidden ABI symbols, not kernel module entries.
 
             python3 - <<'PY'
           from pathlib import Path
 
-          p = Path('common/android/gki_aarch64_modules')
+          p = Path(
+              'common/android/gki_aarch64_modules'
+          )
 
           if p.exists():
               text = p.read_text()
