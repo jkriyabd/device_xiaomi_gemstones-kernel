@@ -203,6 +203,7 @@ jobs:
           sed -i 's/^CONFIG_PLATFORM_I386_PC *=.*/CONFIG_PLATFORM_I386_PC = n/' "$DRV/Makefile"
           sed -i 's/^obj-\$(CONFIG_[A-Za-z0-9_]*) *[:+]*= *\$(MODULE_NAME)\.o/obj-$(CONFIG_8821AU) += $(MODULE_NAME).o/' "$DRV/Makefile"
           sed -i -E 's/-Wno-(enum-int-mismatch|stringop-overread|stringop-overflow|maybe-uninitialized|restrict|format-overflow|format-truncation|packed-not-aligned)//g' "$DRV/Makefile"
+          sed -i -E 's#-I\$\(src\)/([A-Za-z0-9_/]+)#-I$(src)/\1 -I$(srctree)/$(src)/\1#g' "$DRV/Makefile"
           echo 'EXTRA_CFLAGS += -Wno-error -Wno-unknown-warning-option' >> "$DRV/Makefile"
           if ! grep -q 'obj-$(CONFIG_8821AU)' "$DRV/Makefile"; then
             echo "ERROR: driver Makefile obj line not patched. Current obj lines:"
