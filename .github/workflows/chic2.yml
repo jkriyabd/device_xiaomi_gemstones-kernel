@@ -189,27 +189,31 @@ jobs:
           git clone --depth=1 https://github.com/SukiSU-Ultra/SukiSU-Ultra.git \
           common/KernelSU-Next
 
-      - name: Add RTL8812AU driver
+      - name: Add RTL8821AU driver
         working-directory: kernel-build
         run: |
           set -e
-          DRV=common/drivers/net/wireless/rtl8812au
+          DRV=common/drivers/net/wireless/rtl8821au
 
           # 1. Fetch driver source
-          git clone --depth=1 -b v5.6.4.2 https://github.com/aircrack-ng/rtl8812au "$DRV"
+          git clone --depth=1 https://github.com/morrownr/8821au-20210708 "$DRV"
           rm -rf "$DRV/.git"
 
           # 2. Makefile: build as in-tree module, no extra warnings-as-errors
           sed -i 's/^CONFIG_PLATFORM_I386_PC *=.*/CONFIG_PLATFORM_I386_PC = n/' "$DRV/Makefile"
-          sed -i 's/^obj-\$(CONFIG_[A-Za-z0-9_]*) *[:+]*= *\$(MODULE_NAME)\.o/obj-$(CONFIG_88XXAU) += $(MODULE_NAME).o/' "$DRV/Makefile"
+          sed -i 's/^obj-\$(CONFIG_[A-Za-z0-9_]*) *[:+]*= *\$(MODULE_NAME)\.o/obj-$(CONFIG_8821AU) += $(MODULE_NAME).o/' "$DRV/Makefile"
           sed -i 's/-Wno-stringop-overread//g; s/-Wno-stringop-overflow//g; s/-Wno-maybe-uninitialized//g' "$DRV/Makefile"
           echo 'EXTRA_CFLAGS += -Wno-error' >> "$DRV/Makefile"
-          grep -q 'obj-$(CONFIG_88XXAU)' "$DRV/Makefile" || { echo "ERROR: driver Makefile obj line not patched"; exit 1; }
+          if ! grep -q 'obj-$(CONFIG_8821AU)' "$DRV/Makefile"; then
+            echo "ERROR: driver Makefile obj line not patched. Current obj lines:"
+            grep -n 'obj-' "$DRV/Makefile" || true
+            exit 1
+          fi
 
           # 3. Kconfig / Makefile hooks
-          printf 'config 88XXAU\n\ttristate "Realtek 8812A/8821A USB WiFi (aircrack-ng)"\n\tdepends on USB\n' > "$DRV/Kconfig"
-          echo 'source "drivers/net/wireless/rtl8812au/Kconfig"' >> common/drivers/net/wireless/Kconfig
-          echo 'obj-$(CONFIG_88XXAU) += rtl8812au/' >> common/drivers/net/wireless/Makefile
+          printf 'config 8821AU\n\ttristate "Realtek 8811A/8821A USB WiFi (morrownr)"\n\tdepends on USB\n' > "$DRV/Kconfig"
+          echo 'source "drivers/net/wireless/rtl8821au/Kconfig"' >> common/drivers/net/wireless/Kconfig
+          echo 'obj-$(CONFIG_8821AU) += rtl8821au/' >> common/drivers/net/wireless/Makefile
 
           # 4. Source compatibility patches for 5.15
           python3 - "$DRV" <<'PY'
@@ -220,20 +224,26 @@ jobs:
 
           # 4a. stale sta_info auth block in rtw_ap.c
           p = drv / 'core/rtw_ap.c'
-          text = p.read_text()
-          pattern = r'\s*if\s*\(\s*\(\s*psta\s*->\s*auth_len\s*!=\s*0\s*\)\s*&&\s*\(\s*psta\s*->\s*pauth_frame\s*!=\s*NULL\s*\)\s*\)\s*\{.*?\n\s*\}'
-          text, count = re.subn(pattern, '', text, flags=re.DOTALL)
-          p.write_text(text)
-          print(f"rtw_ap.c stale auth block removed: {count}")
+          if p.exists():
+              text = p.read_text()
+              pattern = r'\s*if\s*\(\s*\(\s*psta\s*->\s*auth_len\s*!=\s*0\s*\)\s*&&\s*\(\s*psta\s*->\s*pauth_frame\s*!=\s*NULL\s*\)\s*\)\s*\{.*?\n\s*\}'
+              text, count = re.subn(pattern, '', text, flags=re.DOTALL)
+              p.write_text(text)
+              print(f"rtw_ap.c stale auth block removed: {count}")
+          else:
+              print("rtw_ap.c not found, skipping 4a")
 
           # 4b. wiphy_net() compat in os_intfs.c
           p = drv / 'os_dep/linux/os_intfs.c'
-          text = p.read_text()
-          old = "dev_net_set(ndev, wiphy_net(adapter_to_wiphy(adapter)));"
-          new = "dev_net_set(ndev, &init_net);"
-          if old in text:
-              p.write_text(text.replace(old, new))
-              print("os_intfs.c wiphy_net patched")
+          if p.exists():
+              text = p.read_text()
+              old = "dev_net_set(ndev, wiphy_net(adapter_to_wiphy(adapter)));"
+              new = "dev_net_set(ndev, &init_net);"
+              if old in text:
+                  p.write_text(text.replace(old, new))
+                  print("os_intfs.c wiphy_net patched")
+          else:
+              print("os_intfs.c not found, skipping 4b")
 
           # 4c. NL80211_AUTHTYPE_SAE stale macro
           h = drv / 'include/rtw_mlme_ext.h'
@@ -296,7 +306,7 @@ jobs:
           for CFG in $FILES; do
             echo "Patching: $CFG"
             sed -i '/^# CONFIG_SECTION_MISMATCH_WARN_ONLY is not set/d' "$CFG"
-            printf '\nCONFIG_88XXAU=m\nCONFIG_CFG80211=y\nCONFIG_SECTION_MISMATCH_WARN_ONLY=y\n' >> "$CFG"
+            printf '\nCONFIG_8821AU=m\nCONFIG_CFG80211=y\nCONFIG_SECTION_MISMATCH_WARN_ONLY=y\n' >> "$CFG"
           done
 
       - name: Add missing symbols
@@ -356,7 +366,7 @@ jobs:
             mkdir -p common/android
             cp -f "out/common/modules.order" "common/android/gki_aarch64_modules"
 
-            MOD_ENTRY='drivers/net/wireless/rtl8812au/88XXau.ko'
+            MOD_ENTRY='drivers/net/wireless/rtl8821au/8821au.ko'
             if ! grep -qxF "$MOD_ENTRY" common/android/gki_aarch64_modules; then
               printf '%s\n' "$MOD_ENTRY" >> common/android/gki_aarch64_modules
             fi
@@ -384,13 +394,24 @@ jobs:
             exit 1
           fi
 
-      - name: Collect 88XXau.ko
+      - name: Collect 8821au.ko
         working-directory: kernel-build
         run: |
-          KO=$(find out -name '88XXau.ko' | head -n1)
-          [ -n "$KO" ] || { echo "ERROR: 88XXau.ko was not built"; exit 1; }
-          cp "$KO" "${FINAL_DIR}/88XXau.ko"
-          modinfo "${FINAL_DIR}/88XXau.ko" | head -n 12
+          KO=$(find out -name '8821au.ko' | head -n1)
+          [ -n "$KO" ] || { echo "ERROR: 8821au.ko was not built"; exit 1; }
+          cp "$KO" "${FINAL_DIR}/8821au.ko"
+
+          # Strip debug info (reduces ~110 MB to a few MB)
+          STRIP=$(find prebuilts/clang/host/linux-x86 -name llvm-strip -type f | head -n1)
+          if [ -n "$STRIP" ]; then
+            "$STRIP" --strip-debug "${FINAL_DIR}/8821au.ko"
+          else
+            echo "WARNING: llvm-strip not found, module left unstripped"
+          fi
+          ls -lh "${FINAL_DIR}/8821au.ko"
+
+          modinfo "${FINAL_DIR}/8821au.ko" | head -n 15
+          modinfo "${FINAL_DIR}/8821au.ko" | grep -i 'v2357p0120' || echo "WARNING: 2357:0120 not in alias list"
 
       - name: Package Kernels with AnyKernel3
         working-directory: kernel-build
