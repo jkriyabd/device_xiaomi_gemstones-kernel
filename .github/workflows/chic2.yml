@@ -310,6 +310,27 @@ jobs:
             printf '\nCONFIG_8821AU=m\nCONFIG_CFG80211=y\nCONFIG_SECTION_MISMATCH_WARN_ONLY=y\n' >> "$CFG"
           done
 
+      - name: Patch cfg80211 API for this kernel
+        working-directory: kernel-build
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('common/drivers/net/wireless/rtl8821au/os_dep/linux/ioctl_cfg80211.c')
+          t = p.read_text(errors='surrogateescape')
+          subs = [
+              ("(LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0) && (LINUX_VERSION_CODE < KERNEL_VERSION(6, 9, 0)))", "1"),
+              ("LINUX_VERSION_CODE >= KERNEL_VERSION(5, 19, 2)", "LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)"),
+              ("LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)", "1"),
+              ("LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)", "1"),
+          ]
+          for old, new in subs:
+              n = t.count(old)
+              t = t.replace(old, new)
+              print(f"patched {n}x: {old[:60]}")
+          p.write_text(t, errors='surrogateescape')
+          PY
+
       - name: Add missing symbols
         run: |
           cat >> kernel-build/common/android/abi_gki_aarch64_xiaomi << 'EOF'
