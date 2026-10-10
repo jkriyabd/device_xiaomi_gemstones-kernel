@@ -368,7 +368,6 @@ jobs:
             wiphy_register
             wiphy_unregister
           EOF
-
       - name: Build, and process the kernel(s)
         working-directory: kernel-build
         env:
